@@ -8,7 +8,16 @@ const DESKTOP_BUILD = process.env.DESKTOP_BUILD === "1";
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["192.168.64.2"],
-  ...(DESKTOP_BUILD ? { output: "standalone" as const } : {}),
+  ...(DESKTOP_BUILD
+    ? {
+        output: "standalone" as const,
+        // Desktop only: bundle sharp's native binaries into the standalone
+        // server. On Vercel this produces an invalid function package.
+        outputFileTracingIncludes: {
+          "/**": ["node_modules/sharp/**/*", "node_modules/@img/**/*"],
+        },
+      }
+    : {}),
   turbopack: {
     root: path.join(__dirname),
   },
@@ -16,12 +25,7 @@ const nextConfig: NextConfig = {
     proxyClientMaxBodySize: '30mb',
   },
   serverExternalPackages: ["undici"],
-  // `sharp` is a native module; the file tracer misses its platform binaries
-  // unless we point at them explicitly for the standalone bundle.
-  outputFileTracingIncludes: {
-    "/**": ["node_modules/sharp/**/*", "node_modules/@img/**/*"],
-  },
-  // Never trace the Tauri desktop staging area into the standalone output.
+  // Never trace the Tauri desktop staging area into the output.
   outputFileTracingExcludes: {
     "/**": ["src-tauri/**/*"],
   },
