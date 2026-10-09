@@ -262,7 +262,7 @@ async function runCodexImagegen(opts: {
   }
 }
 
-export const maxDuration = 1000;
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   const {
