@@ -34,11 +34,12 @@ async function recoverJob(taskId: string): Promise<JobResult | null> {
 
   const { data: gen } = await supabaseAdmin
     .from("generations")
-    .select("status, video_url, image_url, image_urls, error_msg")
+    .select("*")
     .eq("task_id", taskId)
     .single();
 
   if (gen?.status === "done") {
+    if (gen.audio_url) return { status: "done", audioUrl: gen.audio_url as string };
     return gen.video_url
       ? { status: "done", videoUrl: gen.video_url }
       : { status: "done", imageUrl: gen.image_url, imageUrls: gen.image_urls };

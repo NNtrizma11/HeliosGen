@@ -28,6 +28,12 @@ function cdnUrl(key: string): string {
 }
 
 function ext(contentType: string): string {
+  if (contentType.startsWith("audio/")) {
+    if (contentType.includes("wav"))  return "wav";
+    if (contentType.includes("ogg"))  return "ogg";
+    if (contentType.includes("mp4") || contentType.includes("aac")) return "m4a";
+    return "mp3";
+  }
   if (contentType.includes("mp4"))  return "mp4";
   if (contentType.includes("webm")) return "webm";
   if (contentType.includes("png"))  return "png";
@@ -95,7 +101,10 @@ function fetchToBuffer(url: string, maxRedirects = 5): Promise<{ buf: Buffer; co
 export async function mirrorToR2(sourceUrl: string, folder: string): Promise<string> {
   if (GUEST_MODE) return localStore.mirrorToStorage(sourceUrl, folder);
   const { buf, contentType } = await fetchToBuffer(sourceUrl);
-  return uploadBuffer(buf, contentType, folder);
+  // Audio hosts sometimes send a generic content type; store audio as MP3 so
+  // browsers and downstream models can play it.
+  const type = folder === "audio" && !contentType.startsWith("audio/") ? "audio/mpeg" : contentType;
+  return uploadBuffer(buf, type, folder);
 }
 
 /** Upload a base64 data URL to R2 (or local disk in guest mode), return URL. */

@@ -24,7 +24,7 @@ export function usePipelineRunner(scopeNodeIds?: string[]) {
     : nodes;
 
   const genNodeCount = scopedNodes.filter(
-    n => n.type === "generateNode" || n.type === "videoGeneratorNode"
+    n => n.type === "generateNode" || n.type === "videoGeneratorNode" || n.type === "voiceNode"
   ).length;
 
   const run = useCallback(() => {

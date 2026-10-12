@@ -37,7 +37,7 @@ export function topoSort(nodes: Node<NodeData>[], edges: Edge[]): string[] {
 export function buildPipelineWaves(nodes: Node<NodeData>[], edges: Edge[]): string[][] {
   const genIds = new Set(
     nodes
-      .filter(n => n.type === "generateNode" || n.type === "videoGeneratorNode")
+      .filter(n => n.type === "generateNode" || n.type === "videoGeneratorNode" || n.type === "voiceNode")
       .map(n => n.id)
   );
   if (genIds.size === 0) return [];

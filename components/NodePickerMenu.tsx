@@ -41,12 +41,14 @@ function sourceNodeTypesFor(targetHandle: string | null): string[] {
     case "resource":                       return ["imageInputNode", "generateNode"];
     case "videoRef":
     case "referenceVideo":                 return ["videoInputNode"];
+    case "audioRef":                       return ["voiceNode"];
     default:                               return [];
   }
 }
 
 // The output handle ID to use on a newly-created source node for a given target handle
 function outputHandleForNewNode(newNodeType: string, targetHandle: string): string | undefined {
+  if (newNodeType === "voiceNode" && targetHandle === "audioRef") return "audioRefOut";
   if (newNodeType === "videoInputNode") {
     if (targetHandle === "videoRef" || targetHandle === "referenceVideo") return "videoRefOut";
     if (targetHandle === "startFrame") return "startFrameOut";
@@ -77,6 +79,7 @@ const NODE_DISPLAY_NAMES: Record<string, string> = {
   generateNode:       "IMAGE GEN",
   videoGeneratorNode: "VIDEO GEN",
   assistantNode:      "ASSISTANT",
+  voiceNode:          "VOICE",
 };
 
 export interface DropState {
@@ -124,6 +127,7 @@ function targetHandleFor(
     }
   }
   // Single-output nodes — fall back to node-type routing
+  if (sourceNodeType === "voiceNode") return targetNodeType === "videoGeneratorNode" ? "audioRef" : null;
   if (sourceNodeType === "promptNode" || sourceNodeType === "assistantNode") return "prompt";
   if (sourceNodeType === "imageInputNode" || sourceNodeType === "generateNode") {
     if (targetNodeType === "videoGeneratorNode") return "startFrame";

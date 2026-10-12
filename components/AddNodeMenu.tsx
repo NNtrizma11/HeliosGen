@@ -20,7 +20,7 @@ const SECTIONS: Array<{ id: string; label: string; nodeTypes: string[] }> = [
   {
     id: "generators",
     label: "GENERATORS",
-    nodeTypes: ["generateNode", "videoGeneratorNode", "assistantNode"],
+    nodeTypes: ["generateNode", "videoGeneratorNode", "voiceNode", "assistantNode"],
   },
   {
     id: "resources",
@@ -96,6 +96,7 @@ export default function AddNodeMenu({ anchorRect, onClose }: AddNodeMenuProps) {
         generateNode: "IMAGE GEN",
         videoGeneratorNode: "VIDEO GEN",
         assistantNode: "ASSISTANT",
+        voiceNode: "VOICE",
       };
       const label = `${DISPLAY[type] ?? type} #${count}`;
 
