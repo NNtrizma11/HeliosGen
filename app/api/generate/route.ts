@@ -16,6 +16,7 @@ import { getKieTokenForUser } from "@/lib/getKieToken";
 import { getAzureKeyForUser } from "@/lib/getAzureKey";
 import { GUEST_MODE, resolveUserId } from "@/lib/guestMode";
 import * as guestDb from "@/lib/guest/db";
+import { imageCostSpec } from "@/lib/pricing";
 
 const BASE   = "https://api.kie.ai";
 const CREATE = `${BASE}/api/v1/jobs/createTask`;
@@ -596,6 +597,7 @@ export async function POST(req: NextRequest) {
       });
       pollKieJob(taskId, kieToken, "image");
     } else {
+      const costSpec = imageCostSpec(model, quality, cfg);
       supabaseAdmin.from("generations").insert({
         task_id:              taskId,
         user_id:              currentUserId,
@@ -606,6 +608,8 @@ export async function POST(req: NextRequest) {
         aspect_ratio:         aspectRatio,
         quality,
         reference_image_urls: r2ImageUrls,
+        cost_key:             costSpec.key,
+        cost_units:           costSpec.units,
       }).then(({ error }) => {
         if (error) console.error("[generate] supabase insert error:", error.message);
       });

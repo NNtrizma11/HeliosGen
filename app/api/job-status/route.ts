@@ -32,11 +32,12 @@ async function recoverJob(taskId: string): Promise<"done" | "error" | "pending" 
   if (!gen) return "not_found";
 
   if (gen.status === "done") {
+    const credits = gen.credits === null || gen.credits === undefined ? undefined : Number(gen.credits);
     const result = gen.audio_url
-      ? { status: "done" as const, audioUrl: gen.audio_url as string }
+      ? { status: "done" as const, audioUrl: gen.audio_url as string, credits }
       : gen.video_url
-      ? { status: "done" as const, videoUrl: gen.video_url }
-      : { status: "done" as const, imageUrl: gen.image_url, imageUrls: gen.image_urls };
+      ? { status: "done" as const, videoUrl: gen.video_url, credits }
+      : { status: "done" as const, imageUrl: gen.image_url, imageUrls: gen.image_urls, credits };
     jobStore.set(taskId, result);
     return "done";
   }

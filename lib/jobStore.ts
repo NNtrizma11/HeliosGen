@@ -4,7 +4,7 @@ import { DATA_DIR } from "./guest/paths";
 
 export type JobResult =
   | { status: "pending"; type?: "image" | "video" | "audio"; userId?: string }
-  | { status: "done"; imageUrl?: string; imageUrls?: string[]; videoUrl?: string; audioUrl?: string }
+  | { status: "done"; imageUrl?: string; imageUrls?: string[]; videoUrl?: string; audioUrl?: string; credits?: number }
   | { status: "error"; error: string };
 
 // DATA_DIR is the repo in dev and a writable per-user dir in the packaged

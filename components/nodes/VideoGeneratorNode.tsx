@@ -14,6 +14,7 @@ import { ShieldBan } from "lucide-react";
 import { VIDEO_MODELS as VIDEO_MODEL_CFG } from "@/lib/modelConfig";
 import { useGeneratingBorderAnimation } from "@/lib/useGeneratingBorderAnimation";
 import MissingInputWarning from "./MissingInputWarning";
+import CostBubble from "./CostBubble";
 
 type VideoGeneratorNodeType = Node<NodeData, "videoGeneratorNode">;
 
@@ -494,7 +495,7 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
 
       if (json.status === "done" && json.videoUrl) {
         gens[slot] = json.videoUrl;
-        updateNodeData(id, { status: "done", videoUrl: json.videoUrl, taskId: undefined, generations: gens, currentGenIdx: slot });
+        updateNodeData(id, { status: "done", videoUrl: json.videoUrl, taskId: undefined, generations: gens, currentGenIdx: slot, lastCredits: json.credits });
       } else {
         const errMsg = json.error ?? "Generation failed";
         gens[slot] = { error: errMsg };
@@ -1197,6 +1198,7 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
         <VideoNodeIcon />
         {data.label as string}
       </span>
+      <CostBubble id={id} />
       {(!connectedHandles.has("prompt") && !cfg.promptOptional || hasFailedMediaInput) && status !== "running" && !data.locked && (
         <MissingInputWarning messages={[
           ...(!connectedHandles.has("prompt") && !cfg.promptOptional ? ["A text node is required"] : []),
