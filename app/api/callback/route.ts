@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { jobStore } from "@/lib/jobStore";
+import { jobStore, type JobResult } from "@/lib/jobStore";
 import { jobEvents } from "@/lib/jobEvents";
 import { mirrorToR2 } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabase/admin";
@@ -39,12 +39,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ received: true });
   }
 
+  // Record what Kie actually charged — this drives the cost estimates.
+  const creditsConsumed = Number(data.creditsConsumed);
+  if (!GUEST_MODE && Number.isFinite(creditsConsumed) && (state === "success" || creditsConsumed > 0)) {
+    const { error: ce } = await supabaseAdmin
+      .from("generations")
+      .update({ credits: creditsConsumed })
+      .eq("task_id", taskId);
+    if (ce) console.error("[callback] credits update failed:", ce.message);
+  }
+
+  // Every settled result carries the real charge, so the node can show it.
+  const settleTask = (_id: string, result: JobResult) =>
+    settle(taskId, result.status === "done" && Number.isFinite(creditsConsumed) ? { ...result, credits: creditsConsumed } : result);
+
   // Treat a non-200 top-level code as a hard error (e.g. Veo 500 responses that
   // carry no state/status field but do carry body.code and body.msg).
   if (body.code !== undefined && body.code !== 200) {
     const error = data.failMsg ?? body.msg ?? "Generation failed";
     console.log("[callback] top-level error code:", body.code, error);
-    settle(taskId, { status: "error", error });
+    settleTask(taskId, { status: "error", error });
     if (GUEST_MODE) {
       guestDb.updateGeneration(taskId, { status: "error", error_msg: error });
     } else {
@@ -87,7 +101,7 @@ export async function POST(req: NextRequest) {
         } catch (err) {
           console.error("[callback] audio storage upload failed, using source URL:", (err as Error).message);
         }
-        settle(taskId, { status: "done", audioUrl });
+        settleTask(taskId, { status: "done", audioUrl });
         if (!GUEST_MODE) {
           const { error: e } = await supabaseAdmin
             .from("generations")
@@ -105,7 +119,7 @@ export async function POST(req: NextRequest) {
         .then((storedUrls) => {
           if (isVideo) {
             const result = { status: "done" as const, videoUrl: storedUrls[0] };
-            settle(taskId, result);
+            settleTask(taskId, result);
             if (GUEST_MODE) {
               guestDb.updateGeneration(taskId, { status: "done", video_url: storedUrls[0] });
             } else {
@@ -113,7 +127,7 @@ export async function POST(req: NextRequest) {
             }
           } else {
             const result = { status: "done" as const, imageUrl: storedUrls[0], imageUrls: storedUrls };
-            settle(taskId, result);
+            settleTask(taskId, result);
             if (GUEST_MODE) {
               guestDb.updateGeneration(taskId, { status: "done", image_url: storedUrls[0], image_urls: storedUrls });
             } else {
@@ -128,7 +142,7 @@ export async function POST(req: NextRequest) {
           console.error("[callback] storage upload failed, using source URLs:", err.message);
           if (isVideo) {
             const result = { status: "done" as const, videoUrl: kieUrls[0] };
-            settle(taskId, result);
+            settleTask(taskId, result);
             if (GUEST_MODE) {
               guestDb.updateGeneration(taskId, { status: "done", video_url: kieUrls[0] });
             } else {
@@ -136,7 +150,7 @@ export async function POST(req: NextRequest) {
             }
           } else {
             const result = { status: "done" as const, imageUrl: kieUrls[0], imageUrls: kieUrls };
-            settle(taskId, result);
+            settleTask(taskId, result);
             if (GUEST_MODE) {
               guestDb.updateGeneration(taskId, { status: "done", image_url: kieUrls[0], image_urls: kieUrls });
             } else {
@@ -149,7 +163,7 @@ export async function POST(req: NextRequest) {
     }
   } else if (state === "fail" || state === "failed" || state === "error") {
     const error = data.failMsg ?? data.error ?? body.msg ?? "Generation failed";
-    settle(taskId, { status: "error", error });
+    settleTask(taskId, { status: "error", error });
 
     if (GUEST_MODE) {
       guestDb.updateGeneration(taskId, { status: "error", error_msg: error });

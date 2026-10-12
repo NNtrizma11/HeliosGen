@@ -37,6 +37,7 @@ import VideoGeneratorNode from "./nodes/VideoGeneratorNode";
 import AssistantNode from "./nodes/AssistantNode";
 import VoiceNode from "@/components/nodes/VoiceNode";
 import FlowBuilderPanel from "@/components/FlowBuilderPanel";
+import BatchRunPanel from "@/components/BatchRunPanel";
 import GroupNode from "./nodes/GroupNode";
 import NodePickerMenu, { DropState } from "./NodePickerMenu";
 import SelectionToolbar from "./SelectionToolbar";
@@ -1616,6 +1617,7 @@ export default function WorkflowCanvas() {
           )}
 
           <FlowBuilderPanel />
+          <BatchRunPanel />
 
           <Controls
             showInteractive={false}

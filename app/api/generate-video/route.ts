@@ -8,6 +8,7 @@ import { VIDEO_MODELS } from "@/lib/modelConfig";
 import { getKieTokenForUser } from "@/lib/getKieToken";
 import { GUEST_MODE, resolveUserId } from "@/lib/guestMode";
 import * as guestDb from "@/lib/guest/db";
+import { videoCostSpec, videoTier } from "@/lib/pricing";
 
 const KIE_BASE = "https://api.kie.ai";
 
@@ -494,7 +495,15 @@ export async function POST(req: NextRequest) {
       pollKieJob(taskId, apiKey, "video");
     }
   } else {
+    const costSpec = videoCostSpec(
+      videoModel,
+      videoTier(cfg, mode, resolution),
+      cfg.sound ? Boolean(sound) : false,
+      clampedDuration,
+    );
     supabaseAdmin.from("generations").insert({
+      cost_key:             costSpec.key,
+      cost_units:           costSpec.units,
       task_id:              taskId,
       user_id:              userId,
       generation_type:      "video",

@@ -20,6 +20,7 @@ import { IMAGE_MODELS, AZURE_POPULAR_SIZES, validateAzureCustomSize } from "@/li
 import { PROVIDERS, ProviderId, getModelProvider, setModelProvider, modelHasProviderChoice } from "@/lib/providers";
 import { useGeneratingBorderAnimation } from "@/lib/useGeneratingBorderAnimation";
 import MissingInputWarning from "./MissingInputWarning";
+import CostBubble from "./CostBubble";
 
 // Derived from config — no hardcoding needed
 const MODELS = IMAGE_MODELS.map((m) => ({ id: m.id, name: m.name, meta: m.provider }));
@@ -516,7 +517,7 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
           const gens = [...((storeNode?.data?.generations as GenEntry[] | undefined) ?? [])] as GenEntry[];
           const slot = storeNode?.data?.currentGenIdx as number ?? gens.length - 1;
           gens[slot] = json.imageUrl as string;
-          updateNodeData(id, { status: "done", imageUrl: json.imageUrl, taskId: undefined, generations: gens, currentGenIdx: slot });
+          updateNodeData(id, { status: "done", imageUrl: json.imageUrl, taskId: undefined, generations: gens, currentGenIdx: slot, lastCredits: json.credits });
           clearInterval(interval);
           document.removeEventListener("visibilitychange", onVisible);
           browserNotify("Node complete", (data.label as string | undefined) ?? "Image generated");
@@ -830,6 +831,7 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
         </div>
       )}
       <span className="node-above-label">{data.label as string}</span>
+      <CostBubble id={id} />
       {(!promptConnected || hasFailedImageInput) && status !== "running" && !data.locked && (
         <MissingInputWarning messages={[
           ...(!promptConnected ? ["A text node is required"] : []),

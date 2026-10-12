@@ -10,6 +10,7 @@ import {
   DEFAULT_VOICE,
   clampSetting,
 } from "@/lib/voiceConfig";
+import { audioCostSpec } from "@/lib/pricing";
 
 const CREATE = "https://api.kie.ai/api/v1/jobs/createTask";
 
@@ -96,6 +97,8 @@ export async function POST(req: NextRequest) {
       status:          "pending",
       model:           modelId,
       prompt:          text,
+      cost_key:        audioCostSpec(modelId, text.length).key,
+      cost_units:      audioCostSpec(modelId, text.length).units,
     });
     if (error) console.error("[generate-audio] supabase insert error:", error.message);
 

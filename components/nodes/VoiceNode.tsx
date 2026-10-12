@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from "r
 import { Handle, Position, NodeProps, Node } from "@xyflow/react";
 import NodeActionBar from "./NodeActionBar";
 import MissingInputWarning from "./MissingInputWarning";
+import CostBubble from "./CostBubble";
 import { useWorkflowStore, NodeData } from "@/lib/store";
 import { createClient } from "@/lib/supabase/client";
 import { resolveInputs } from "@/lib/executor";
@@ -98,7 +99,7 @@ export default function VoiceNode({ id, data, selected }: NodeProps<VoiceNodeTyp
         const json = await res.json();
         if (cancelled) return;
         if (json.status === "done") {
-          updateNodeData(id, { status: "done", audioUrl: json.audioUrl, taskId: undefined });
+          updateNodeData(id, { status: "done", audioUrl: json.audioUrl, taskId: undefined, lastCredits: json.credits });
           browserNotify("Voice ready", (data.label as string | undefined) ?? "Voiceover generated");
         } else if (json.status === "error" || json.status === "not_found") {
           const msg = json.error ?? "Job expired or unknown";
@@ -187,6 +188,7 @@ export default function VoiceNode({ id, data, selected }: NodeProps<VoiceNodeTyp
         onDuplicate={handleDuplicate}
       />
       <span className="node-above-label">{data.label as string}</span>
+      <CostBubble id={id} />
       {!promptConnected && !busy && !data.locked && (
         <MissingInputWarning messages={["A text node with the script is required"]} />
       )}
