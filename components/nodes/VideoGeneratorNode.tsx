@@ -486,7 +486,7 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
 
     es.onmessage = (event) => {
       es.close();
-      let json: { status: string; videoUrl?: string; error?: string };
+      let json: { status: string; videoUrl?: string; error?: string; credits?: number };
       try { json = JSON.parse(event.data); } catch { return; }
 
       const storeNode = useWorkflowStore.getState().nodes.find((n) => n.id === id);
