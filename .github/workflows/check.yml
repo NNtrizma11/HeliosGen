@@ -19,7 +19,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Build
-        run: pnpm run build
+        run: |
+          set -o pipefail
+          if ! pnpm run build 2>&1 | tee build.log; then
+            msg=$(tail -80 build.log | sed -e ':a' -e 'N' -e '$!ba' -e 's/%/%25/g' -e 's/\r//g' -e 's/\n/%0A/g')
+            echo "::error title=Build failed::$msg"
+            exit 1
+          fi
         env:
           NEXT_TELEMETRY_DISABLED: "1"
           NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
