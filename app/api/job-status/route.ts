@@ -25,14 +25,16 @@ async function recoverJob(taskId: string): Promise<"done" | "error" | "pending" 
 
   const { data: gen } = await supabaseAdmin
     .from("generations")
-    .select("status, video_url, image_url, image_urls, error_msg")
+    .select("*")
     .eq("task_id", taskId)
     .single();
 
   if (!gen) return "not_found";
 
   if (gen.status === "done") {
-    const result = gen.video_url
+    const result = gen.audio_url
+      ? { status: "done" as const, audioUrl: gen.audio_url as string }
+      : gen.video_url
       ? { status: "done" as const, videoUrl: gen.video_url }
       : { status: "done" as const, imageUrl: gen.image_url, imageUrls: gen.image_urls };
     jobStore.set(taskId, result);

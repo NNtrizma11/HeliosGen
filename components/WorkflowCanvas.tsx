@@ -35,6 +35,8 @@ import VideoInputNode from "./nodes/VideoInputNode";
 import GenerateNode from "./nodes/GenerateNode";
 import VideoGeneratorNode from "./nodes/VideoGeneratorNode";
 import AssistantNode from "./nodes/AssistantNode";
+import VoiceNode from "@/components/nodes/VoiceNode";
+import FlowBuilderPanel from "@/components/FlowBuilderPanel";
 import GroupNode from "./nodes/GroupNode";
 import NodePickerMenu, { DropState } from "./NodePickerMenu";
 import SelectionToolbar from "./SelectionToolbar";
@@ -69,6 +71,7 @@ const nodeTypes = {
   generateNode: GenerateNode,
   videoGeneratorNode: VideoGeneratorNode,
   assistantNode: AssistantNode,
+  voiceNode: VoiceNode,
   groupNode: GroupNode,
 };
 
@@ -159,6 +162,7 @@ function nodeLabel(type: string, existingNodes: Node<NodeData>[]): string {
     generateNode: "IMAGE GEN",
     videoGeneratorNode: "VIDEO GEN",
     assistantNode: "ASSISTANT",
+    voiceNode: "VOICE",
   };
   if (type === "assistantNode") return "ASSISTANT";
   return `${names[type] ?? type} #${count}`;
@@ -970,6 +974,9 @@ export default function WorkflowCanvas() {
         return connection.targetHandle === "decorativeText" || connection.targetHandle === "decorativeImage";
       }
 
+      // Voice nodes output audio only — they can feed audio reference inputs and nothing else
+      if (source?.type === "voiceNode" && connection.targetHandle !== "audioRef") return false;
+
       // Prompt handles only accept text-producing nodes
       if (
         connection.targetHandle === "prompt" &&
@@ -1471,7 +1478,7 @@ export default function WorkflowCanvas() {
   }, []);
 
   const canRun = !isRunning && nodes.some(
-    (n) => n.type === "generateNode" || n.type === "videoGeneratorNode" || n.type === "assistantNode"
+    (n) => n.type === "generateNode" || n.type === "videoGeneratorNode" || n.type === "assistantNode" || n.type === "voiceNode"
   );
 
   const computedNodes = useMemo(() => {
@@ -1607,6 +1614,8 @@ export default function WorkflowCanvas() {
               onClose={() => setAddMenuAnchor(null)}
             />
           )}
+
+          <FlowBuilderPanel />
 
           <Controls
             showInteractive={false}

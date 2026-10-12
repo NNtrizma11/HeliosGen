@@ -92,6 +92,7 @@ export function getNodeLabel(type: string, n: number): string {
     imageInputNode:      `Image #${n}`,
     generateNode:        `Image Generator #${n}`,
     videoGeneratorNode:  `Video Generator #${n}`,
+    voiceNode:           `Voice #${n}`,
   };
   return map[type] ?? `Node #${n}`;
 }
@@ -201,6 +202,8 @@ interface WorkflowStore {
   onConnect:          (connection: Connection) => void;
   addNode:            (node: Node<NodeData>) => void;
   insertEdge:         (edge: Edge) => void;
+  /** Append a whole generated flow in one step (one undo snapshot, labels kept as given). */
+  insertFlow:         (nodes: Node<NodeData>[], edges: Edge[]) => void;
   removeEdgesForHandle: (nodeId: string, handleId: string) => void;
   killEdgesForHandles:  (nodeId: string, handleIds: string[]) => void;
   remapTargetHandle:    (nodeId: string, fromHandle: string, toHandle: string) => void;
@@ -491,6 +494,31 @@ export const useWorkflowStore = create<WorkflowStore>()(
               undoStack,
               redoStack: [],
               spaces: syncSpace(s.spaces, s.activeSpaceId, s.nodes, edges, s.nodeCounters),
+            };
+          });
+          requestWorkflowSync();
+        },
+
+        insertFlow: (newNodes, newEdges) => {
+          set((s) => {
+            const undoStack = [...s.undoStack.slice(-(MAX_UNDO - 1)), { nodes: s.nodes, edges: s.edges }];
+            const nodes = [
+              ...s.nodes.map((n) => n.selected ? { ...n, selected: false } : n),
+              ...newNodes,
+            ];
+            const edges = [...s.edges, ...newEdges];
+            const nodeCounters = { ...s.nodeCounters };
+            for (const n of newNodes) {
+              const type = n.type ?? "unknown";
+              nodeCounters[type] = (nodeCounters[type] ?? 0) + 1;
+            }
+            return {
+              nodes,
+              edges,
+              nodeCounters,
+              undoStack,
+              redoStack: [],
+              spaces: syncSpace(s.spaces, s.activeSpaceId, nodes, edges, nodeCounters),
             };
           });
           requestWorkflowSync();

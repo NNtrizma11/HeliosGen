@@ -14,6 +14,11 @@ export const NODE_META: Record<
   generateNode:       { accent: "#2DD4BF", bg: "#001f1f",  bigIcon: <Sparkles      size={18} strokeWidth={1.7} /> },
   assistantNode:      { accent: "#FBBF24", bg: "#1c1000",  bigIcon: <Bot           size={18} strokeWidth={1.7} /> },
   videoGeneratorNode: { accent: "#5EEAD4", bg: "#042f2e",  bigIcon: <Clapperboard  size={18} strokeWidth={1.7} /> },
+  voiceNode:          { accent: "#a78bfa", bg: "#1e1033",  bigIcon: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+      <path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2" />
+    </svg>
+  ) },
 };
 
 export const NODES: Array<{
@@ -50,6 +55,18 @@ export const NODES: Array<{
       ),
       label: "Video",
       description: "Google Veo / Kling 3.0 · video generation",
+    },
+    {
+      type: "voiceNode",
+      category: "generators",
+      canReceiveConnection: true,
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+          <path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2" />
+        </svg>
+      ),
+      label: "Voice",
+      description: "ElevenLabs · text to speech",
     },
     {
       type: "generateNode",
@@ -112,6 +129,7 @@ export const NODES: Array<{
 const GEN_NODE_SETTINGS: Record<string, string[]> = {
   generateNode: ["model", "aspectRatio", "quality", "azureQuality", "azureResolution"],
   videoGeneratorNode: ["videoModel", "klingMode", "grokResolution", "duration", "aspectRatio", "sound"],
+  voiceNode: ["voiceModel", "voice", "speed", "stability", "similarityBoost", "style"],
 };
 
 /** Returns settings from the last existing node of `type` to seed a newly created one. */
@@ -139,6 +157,7 @@ export const NODE_SIZE: Record<string, { w: number; h: number }> = {
   promptNode: { w: 520, h: 250 },
   imageInputNode: { w: 200, h: 160 },
   videoInputNode: { w: 220, h: 180 },
+  voiceNode: { w: 300, h: 260 },
 };
 
 export const FALLBACK_SIZE = { w: 280, h: 280 };

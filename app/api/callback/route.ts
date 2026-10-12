@@ -69,7 +69,36 @@ export async function POST(req: NextRequest) {
     }
     if (kieUrls.length > 0) {
       const existing = jobStore.get(taskId);
-      const isVideo  = existing?.status === "pending" && (existing as { type?: string }).type === "video";
+      let kind = existing?.status === "pending" ? (existing as { type?: string }).type : undefined;
+      // The local job store is lost on restart; fall back to the database row.
+      if (!kind && !GUEST_MODE) {
+        const { data: row } = await supabaseAdmin
+          .from("generations")
+          .select("generation_type")
+          .eq("task_id", taskId)
+          .maybeSingle();
+        kind = (row?.generation_type as string | undefined) ?? undefined;
+      }
+
+      if (kind === "audio") {
+        let audioUrl = kieUrls[0];
+        try {
+          audioUrl = await mirrorToR2(kieUrls[0], "audio");
+        } catch (err) {
+          console.error("[callback] audio storage upload failed, using source URL:", (err as Error).message);
+        }
+        settle(taskId, { status: "done", audioUrl });
+        if (!GUEST_MODE) {
+          const { error: e } = await supabaseAdmin
+            .from("generations")
+            .update({ status: "done", audio_url: audioUrl })
+            .eq("task_id", taskId);
+          if (e) console.error("[callback] supabase audio update failed:", e.message);
+        }
+        return NextResponse.json({ received: true });
+      }
+
+      const isVideo  = kind === "video";
       const folder   = isVideo ? "videos" : "images";
 
       Promise.all(kieUrls.map((u) => mirrorToR2(u, folder)))

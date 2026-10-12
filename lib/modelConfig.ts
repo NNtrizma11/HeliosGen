@@ -163,6 +163,26 @@ export const IMAGE_MODELS: ImageModel[] = [
     },
   },
   {
+    // https://docs.kie.ai/market/google/nanobanana-2-1
+    id: "nano-banana-2-1",
+    apiId: "nano-banana-2-1",
+    name: "Nano Banana 2.1",
+    provider: "Google",
+    ratios: ["auto", "1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4", "2:3", "3:2", "21:9", "1:4", "4:1", "1:8", "8:1"],
+    supportsImages: true,
+    maxImages: 10,
+    supportsQuality: true,
+    defaultQuality: "1k",
+    apiInput: {
+      aspectRatioKey: "aspect_ratio",
+      imageInputKey: "image_input",
+      qualityKey: "resolution",
+      qualityOptions: ["1k", "2k", "4k"],
+      promptMaxLength: 20000,
+      outputFormat: "jpg",
+    },
+  },
+  {
     id: "nano-banana-pro",
     apiId: "nano-banana-pro",
     name: "Nano Banana Pro",
@@ -222,6 +242,30 @@ export const IMAGE_MODELS: ImageModel[] = [
     supportsImages: true,
     maxImages: 14,
     supportsQuality: true,
+    apiInput: {
+      aspectRatioKey: "aspect_ratio",
+      imageInputKey: "image_urls",
+      qualityKey: "quality",
+      qualityMap: { "1k": "basic", "2k": "basic", "4k": "high" },
+      qualityOptions: ["2k", "4k"],
+      promptMaxLength: 3000,
+      extra: { nsfw_checker: false },
+    },
+  },
+  {
+    // https://docs.kie.ai/market/seedream/4-5-edit (with references)
+    // https://docs.kie.ai/market/seedream/4-5-text-to-image (without)
+    // Quality: basic = 2K output, high = 4K output.
+    id: "seedream-4-5",
+    apiId: "seedream/4.5-edit",
+    textOnlyApiId: "seedream/4.5-text-to-image",
+    name: "Seedream 4.5",
+    provider: "Seedream",
+    ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", "2:3", "3:2", "21:9"],
+    supportsImages: true,
+    maxImages: 14,
+    supportsQuality: true,
+    defaultQuality: "2k",
     apiInput: {
       aspectRatioKey: "aspect_ratio",
       imageInputKey: "image_urls",
