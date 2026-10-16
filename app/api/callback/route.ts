@@ -30,7 +30,11 @@ export async function POST(req: NextRequest) {
 
   const data   = body.data ?? body;
   const taskId = data.taskId ?? data.id ?? body.taskId ?? body.id;
-  const state  = String(data.state ?? data.status ?? "").toLowerCase();
+  let state    = String(data.state ?? data.status ?? "").toLowerCase();
+  // Veo callbacks carry no state: success is code 200 with data.info.resultUrls.
+  const veoUrls: string[] = Array.isArray(data.info?.resultUrls) ? data.info.resultUrls.filter(Boolean)
+    : Array.isArray(data.info?.result_urls) ? data.info.result_urls.filter(Boolean) : [];
+  if (!state && body.code === 200 && veoUrls.length > 0) state = "success";
 
   console.log("[callback] taskId:", taskId, "state:", state);
 
@@ -75,6 +79,7 @@ export async function POST(req: NextRequest) {
 
   if (state === "success") {
     let kieUrls = extractUrls(data.resultJson);
+    if (kieUrls.length === 0 && veoUrls.length > 0) kieUrls = veoUrls;
     if (kieUrls.length === 0 && data.videoUrl) {
       kieUrls = [data.videoUrl];
     }

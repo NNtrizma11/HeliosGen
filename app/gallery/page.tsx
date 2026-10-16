@@ -1736,9 +1736,12 @@ function GalleryInner() {
   useEffect(() => {
     const el = gridOuterRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(([e]) => setContainerWidth(e.contentRect.width));
+    // Whole pixels only, and ignore 1px jitter — fractional widths on scaled
+    // Windows displays otherwise re-layout the grid in an endless loop.
+    const apply = (w: number) => setContainerWidth(prev => (Math.abs(prev - Math.floor(w)) <= 1 ? prev : Math.floor(w)));
+    const ro = new ResizeObserver(([e]) => apply(e.contentRect.width));
     ro.observe(el);
-    setContainerWidth(el.getBoundingClientRect().width);
+    apply(el.getBoundingClientRect().width);
     return () => ro.disconnect();
   // Re-run once the full layout is mounted (after auth loads and user is present)
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3205,7 +3208,7 @@ function GalleryInner() {
       </div>}
 
       {/* ── Grid ── */}
-      {!user && process.env.NEXT_PUBLIC_GUEST_MODE !== "true" ? <GalleryLoggedOut tab={tab} /> : <div ref={gridOuterRef} style={{ flex: 1, overflowY: "auto", paddingBottom: "260px", display: "flex", flexDirection: "column", userSelect: marqueeRect ? "none" : undefined, cursor: marqueeRect ? "crosshair" : undefined }} onMouseDown={e => {
+      {!user && process.env.NEXT_PUBLIC_GUEST_MODE !== "true" ? <GalleryLoggedOut tab={tab} /> : <div ref={gridOuterRef} style={{ flex: 1, overflowY: "auto", overflowX: "hidden", scrollbarGutter: "stable", paddingBottom: "260px", display: "flex", flexDirection: "column", userSelect: marqueeRect ? "none" : undefined, cursor: marqueeRect ? "crosshair" : undefined }} onMouseDown={e => {
         if (e.button !== 0) return;
         const target = e.target as HTMLElement;
         if (target.closest("button, .gallery-action-btn, .gallery-checkbox")) return;
@@ -3714,7 +3717,7 @@ function GalleryInner() {
           opacity: anySelected && !promptExpanded ? 0 : 1,
           transition: "transform 350ms cubic-bezier(0.4,0,0.2,1), opacity 240ms ease, left 350ms cubic-bezier(0.4,0,0.2,1), width 350ms cubic-bezier(0.4,0,0.2,1), height 350ms cubic-bezier(0.4,0,0.2,1)",
           pointerEvents: anySelected && !promptExpanded ? "none" : "auto",
-          width: promptExpanded ? "75vw" : "min(860px, calc(100vw - 32px))",
+          width: promptExpanded ? "75vw" : `min(860px, calc(100vw - ${isMobile ? "0px" : state === "collapsed" ? "var(--sidebar-width-icon)" : "var(--sidebar-width)"} - 32px))`,
           height: promptExpanded ? "75vh" : "auto",
           zIndex: 200,
         }}

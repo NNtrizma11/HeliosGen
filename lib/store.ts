@@ -204,6 +204,14 @@ interface WorkflowStore {
   insertEdge:         (edge: Edge) => void;
   /** Append a whole generated flow in one step (one undo snapshot, labels kept as given). */
   insertFlow:         (nodes: Node<NodeData>[], edges: Edge[]) => void;
+  /** Apply a chat edit to existing nodes in one step (one undo snapshot). */
+  applyNodeEdit: (edit: {
+    updates: Array<{ id: string; data: Partial<NodeData> }>;
+    removeNodeIds?: string[];
+    removeEdgeIds?: string[];
+    addNodes?: Node<NodeData>[];
+    addEdges?: Edge[];
+  }) => void;
   removeEdgesForHandle: (nodeId: string, handleId: string) => void;
   killEdgesForHandles:  (nodeId: string, handleIds: string[]) => void;
   remapTargetHandle:    (nodeId: string, fromHandle: string, toHandle: string) => void;
@@ -509,6 +517,39 @@ export const useWorkflowStore = create<WorkflowStore>()(
             const edges = [...s.edges, ...newEdges];
             const nodeCounters = { ...s.nodeCounters };
             for (const n of newNodes) {
+              const type = n.type ?? "unknown";
+              nodeCounters[type] = (nodeCounters[type] ?? 0) + 1;
+            }
+            return {
+              nodes,
+              edges,
+              nodeCounters,
+              undoStack,
+              redoStack: [],
+              spaces: syncSpace(s.spaces, s.activeSpaceId, nodes, edges, nodeCounters),
+            };
+          });
+          requestWorkflowSync();
+        },
+
+        applyNodeEdit: ({ updates, removeNodeIds = [], removeEdgeIds = [], addNodes = [], addEdges = [] }) => {
+          set((s) => {
+            const undoStack = [...s.undoStack.slice(-(MAX_UNDO - 1)), { nodes: s.nodes, edges: s.edges }];
+            const gone = new Set(removeNodeIds);
+            const byId = new Map(updates.map((u) => [u.id, u.data]));
+            const nodes = [
+              ...s.nodes
+                .filter((n) => !gone.has(n.id))
+                .map((n) => (byId.has(n.id) ? { ...n, data: { ...n.data, ...byId.get(n.id) } } : n)),
+              ...addNodes,
+            ];
+            const dropEdges = new Set(removeEdgeIds);
+            const edges = [
+              ...s.edges.filter((e) => !dropEdges.has(e.id) && !gone.has(e.source) && !gone.has(e.target)),
+              ...addEdges,
+            ];
+            const nodeCounters = { ...s.nodeCounters };
+            for (const n of addNodes) {
               const type = n.type ?? "unknown";
               nodeCounters[type] = (nodeCounters[type] ?? 0) + 1;
             }
