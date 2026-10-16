@@ -252,14 +252,20 @@ export async function POST(req: NextRequest) {
     // On the two other models (fast/quality), one more element is present: reference.
     const isLite = cfg.id === "veo3_lite";
 
-    if (veoMode === "references" && !isLite) {
-      generationType = "REFERENCE_2_VIDEO";
-      if (refImages.length > 0) imageUrls.push(...refImages.slice(0, 3));
+    // The gallery page sends Veo frames as a flat `imageUrls` list plus a
+    // generationType; the canvas sends start/end frames. Accept both.
+    const wantsReferences = (veoMode === "references" || rawGenerationType === "REFERENCE_2_VIDEO") && !isLite;
+    if (wantsReferences) {
+      if (refImages.length > 0) {
+        generationType = "REFERENCE_2_VIDEO";
+        imageUrls.push(...refImages.slice(0, 3));
+      }
     } else {
-      if (startFrameUrl || endFrameUrl) {
+      const frames = [startFrameUrl, endFrameUrl].filter((u): u is string => !!u);
+      if (frames.length === 0) frames.push(...refImages.slice(0, 2));
+      if (frames.length > 0) {
         generationType = "FIRST_AND_LAST_FRAMES_2_VIDEO";
-        if (startFrameUrl) imageUrls.push(startFrameUrl);
-        if (endFrameUrl) imageUrls.push(endFrameUrl);
+        imageUrls.push(...frames);
       }
     }
 
@@ -267,7 +273,7 @@ export async function POST(req: NextRequest) {
 
     input = {
       prompt: prompt ?? "",
-      generationType: rawGenerationType || generationType,
+      generationType,
       [apiInput.aspectRatioKey!]: aspectRatio,
       [apiInput.resolutionKey!]: resolution,
       imageUrls: imageUrls,

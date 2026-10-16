@@ -1,11 +1,12 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Panel, useReactFlow } from "@xyflow/react";
 import { useWorkflowStore } from "@/lib/store";
 import { createClient } from "@/lib/supabase/client";
 import { planToGraph, type FlowPlan, type ValidationResult, type PlanNode } from "@/lib/flowBuilder";
 import { IMAGE_MODELS, VIDEO_MODELS } from "@/lib/modelConfig";
 import { VOICES } from "@/lib/voiceConfig";
+import { EDITABLE_NODE_TYPES, snapshotTargets, editToStoreOps, type EditPlan } from "@/lib/nodeEdit";
 
 interface ChatEntry {
   role: "user" | "assistant";
@@ -14,6 +15,8 @@ interface ChatEntry {
   /** Extra detail shown only in the panel */
   details?: string[];
   tone?: "ok" | "error";
+  /** Part of a node edit, kept out of the builder's history */
+  edit?: boolean;
 }
 
 const RULES_KEY = "flow-builder-rules";
@@ -48,7 +51,22 @@ export default function FlowBuilderPanel() {
   const insertFlow = useWorkflowStore((s) => s.insertFlow);
   const updateNodeData = useWorkflowStore((s) => s.updateNodeData);
   const setAuthModalOpen = useWorkflowStore((s) => s.setAuthModalOpen);
+  const applyNodeEdit = useWorkflowStore((s) => s.applyNodeEdit);
+  const nodes = useWorkflowStore((s) => s.nodes);
   const { fitView } = useReactFlow();
+
+  // Nodes the chat is editing: follows the canvas selection; ✕ detaches one.
+  const selectedIds = useMemo(
+    () => nodes.filter((n) => n.selected && n.type && EDITABLE_NODE_TYPES[n.type]).map((n) => n.id),
+    [nodes],
+  );
+  const selectionKey = selectedIds.join(",");
+  const [attached, setAttached] = useState<string[]>([]);
+  useEffect(() => { setAttached(selectionKey ? selectionKey.split(",") : []); }, [selectionKey]);
+  const attachedNodes = attached
+    .map((id) => nodes.find((n) => n.id === id))
+    .filter((n): n is NonNullable<typeof n> => !!n);
+  const editing = attachedNodes.length > 0;
 
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
@@ -100,6 +118,62 @@ export default function FlowBuilderPanel() {
     return graph;
   }, [insertFlow, updateNodeData, fitView]);
 
+  const sendEdit = useCallback(async (text: string, token: string) => {
+    const state = useWorkflowStore.getState();
+    const ids = attachedNodes.map((n) => n.id);
+    const { targets, refs } = snapshotTargets(ids, state.nodes, state.edges);
+    const names = targets.map((t) => t.label).join(", ");
+    setChat((c) => [...c, { role: "user", edit: true, content: `[Editing ${names}] ${text}` }]);
+
+    const res = await fetch("/api/flow-builder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ mode: "edit", targets, rules, messages: [{ role: "user", content: text }] }),
+    });
+    const json = (await res.json()) as { edit?: EditPlan; validation?: { errors: string[]; warnings: string[] }; error?: string };
+    if (!res.ok || !json.edit) throw new Error(json.error ?? "The edit failed.");
+
+    const { edit, validation } = json;
+    const problems = [...(edit.problems ?? []), ...(validation?.errors ?? [])];
+    const changes = edit.changes ?? [];
+    const deletes = edit.delete ?? [];
+
+    if (problems.length) {
+      setChat((c) => [...c, {
+        role: "assistant", tone: "error", edit: true,
+        content: `${edit.message ?? "I did not change anything."} Problems: ${problems.join(" ")}`,
+        details: [edit.message ?? "Nothing was changed.", ...problems],
+      }]);
+      return;
+    }
+    if (!changes.length && !deletes.length) {
+      setChat((c) => [...c, { role: "assistant", tone: "ok", edit: true, content: edit.message ?? "No changes needed." }]);
+      return;
+    }
+
+    const ops = editToStoreOps(edit, refs, useWorkflowStore.getState().nodes);
+    applyNodeEdit(ops);
+    const labelOf = (k: string) => targets.find((t) => t.key === k)?.label ?? k;
+    setChat((c) => [...c, {
+      role: "assistant", tone: "ok", edit: true,
+      content: edit.message ?? "Updated the nodes.",
+      details: [
+        edit.message ?? "Updated the nodes.",
+        ...changes.filter((ch) => !deletes.includes(ch.key)).map((ch) => {
+          const parts = [
+            ...Object.entries(ch.settings ?? {}).map(([k, v]) => `${k} → ${String(v)}`),
+            ...(ch.label ? [`renamed to ${ch.label}`] : []),
+            ...(ch.prompt !== undefined ? ["prompt rewritten"] : []),
+          ];
+          return `✓ ${labelOf(ch.key)}: ${parts.join(", ") || "updated"}`;
+        }),
+        ...deletes.map((k) => `🗑 Deleted ${labelOf(k)}`),
+        ...(validation?.warnings ?? []).map((w) => `Warning: ${w}`),
+        "Nothing was generated. Ctrl+Z undoes this edit.",
+      ],
+    }]);
+  }, [attachedNodes, rules, applyNodeEdit]);
+
   const send = useCallback(async () => {
     const text = input.trim();
     if (!text || busy) return;
@@ -107,6 +181,20 @@ export default function FlowBuilderPanel() {
     const { data: authData } = await createClient().auth.getSession();
     if (!authData.session) { setAuthModalOpen(true); return; }
     const token = authData.session.access_token;
+
+    if (editing) {
+      setInput("");
+      setBusy(true);
+      try {
+        await sendEdit(text, token);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setChat((c) => [...c, { role: "assistant", tone: "error", edit: true, content: `Error: ${msg}`, details: [msg] }]);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
 
     const next: ChatEntry[] = [...chat, { role: "user", content: text }];
     setChat(next);
@@ -117,7 +205,7 @@ export default function FlowBuilderPanel() {
       const res = await fetch("/api/flow-builder", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ messages: next.map(({ role, content }) => ({ role, content })), rules }),
+        body: JSON.stringify({ messages: next.filter((m) => !m.content.startsWith("[Editing ") && !m.edit).map(({ role, content }) => ({ role, content })), rules }),
       });
       const json = (await res.json()) as { plan?: FlowPlan; validation?: ValidationResult; error?: string };
       if (!res.ok || !json.plan) throw new Error(json.error ?? "The builder failed.");
@@ -160,7 +248,7 @@ export default function FlowBuilderPanel() {
     } finally {
       setBusy(false);
     }
-  }, [input, busy, chat, rules, build, setAuthModalOpen]);
+  }, [input, busy, chat, rules, build, setAuthModalOpen, editing, sendEdit]);
 
   if (!open) {
     return (
@@ -185,7 +273,7 @@ export default function FlowBuilderPanel() {
       >
         <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10">
           <span className="font-semibold text-violet-200">✦ Build with AI</span>
-          <span className="text-[11px] text-gray-500">builds nodes only, never generates</span>
+          <span className="text-[11px] text-gray-500">{editing ? "edits selected nodes, never generates" : "builds nodes only, never generates"}</span>
           <button type="button" className="ml-auto text-gray-400 hover:text-white" onClick={() => setOpen(false)}>✕</button>
         </div>
 
@@ -209,10 +297,38 @@ export default function FlowBuilderPanel() {
               )}
             </div>
           ))}
-          {busy && <div className="text-xs text-amber-300 animate-pulse">Planning the flow… long requests can take a minute or two.</div>}
+          {busy && <div className="text-xs text-amber-300 animate-pulse">{editing ? "Editing the selected nodes…" : "Planning the flow… long requests can take a minute or two."}</div>}
         </div>
 
         <div className="border-t border-white/10 p-3 space-y-2">
+          {editing ? (
+            <div className="rounded-lg bg-violet-500/10 border border-violet-400/20 px-2 py-1.5">
+              <div className="flex items-center gap-2 text-[11px] text-violet-200 mb-1">
+                <span>Chatting with {attachedNodes.length} node{attachedNodes.length === 1 ? "" : "s"}</span>
+                <button type="button" className="ml-auto text-gray-400 hover:text-white" onClick={() => setAttached([])} disabled={busy}>
+                  Remove all
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {attachedNodes.map((n) => (
+                  <span key={n.id} className="inline-flex items-center gap-1 rounded-full bg-white/10 pl-2 pr-1 py-0.5 text-[11px]">
+                    <span className="max-w-[140px] truncate">{String(n.data.label ?? n.id)}</span>
+                    <button
+                      type="button"
+                      title="Remove from chat"
+                      className="w-4 h-4 rounded-full text-gray-400 hover:text-white hover:bg-white/10 leading-none"
+                      onClick={() => setAttached((a) => a.filter((x) => x !== n.id))}
+                      disabled={busy}
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="text-[10px] text-gray-500">Tip: select nodes on the canvas to chat with them and change them.</div>
+          )}
           <button type="button" className="text-[11px] text-gray-400 hover:text-gray-200" onClick={() => setShowRules((v) => !v)}>
             {showRules ? "▾" : "▸"} Standing rules{rules.trim() ? " (active)" : ""}
           </button>
@@ -226,14 +342,14 @@ export default function FlowBuilderPanel() {
           )}
           <textarea
             className="w-full h-28 resize-none rounded-lg bg-[#1a1a1a] border border-white/10 px-2 py-1.5 text-xs focus:outline-none"
-            placeholder="Describe the flow to build…"
+            placeholder={editing ? "What should change? e.g. “make it 10 seconds with sound”, “rewrite the prompt at night”, “delete this node”" : "Describe the flow to build…"}
             value={input}
             disabled={busy}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send(); }}
           />
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-gray-500">Ctrl+Enter to send · Ctrl+Z undoes a build</span>
+            <span className="text-[10px] text-gray-500">Ctrl+Enter to send · Ctrl+Z undoes</span>
             {chat.length > 0 && (
               <button type="button" className="ml-auto text-[11px] text-gray-400 hover:text-white" onClick={() => setChat([])} disabled={busy}>
                 New chat
@@ -245,7 +361,7 @@ export default function FlowBuilderPanel() {
               disabled={busy || !input.trim()}
               className={`${chat.length > 0 ? "" : "ml-auto "}px-3 py-1.5 rounded-lg font-semibold bg-violet-500/30 text-violet-100 border border-violet-400/40 hover:bg-violet-500/40 disabled:opacity-40`}
             >
-              {busy ? "Building…" : "Build"}
+              {busy ? (editing ? "Editing…" : "Building…") : (editing ? "Apply" : "Build")}
             </button>
           </div>
         </div>

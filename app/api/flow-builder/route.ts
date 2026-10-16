@@ -4,12 +4,14 @@
  * Turns a plain-language request into a FlowPlan (nodes + connections) using
  * Claude through the user's Kie key. Never starts any generation.
  *
- * Body: { messages: { role: "user" | "assistant"; content: string }[], rules?: string }
- * Returns: { plan, validation } or { error }
+ * Body: { messages: { role: "user" | "assistant"; content: string }[], rules?: string,
+ *         mode?: "edit", targets?: EditTarget[] }
+ * Returns: { plan, validation } — or in edit mode { edit, validation } — or { error }
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getKieToken } from "@/lib/getKieToken";
 import { FLOW_BUILDER_RULES, catalogText, extractJson, validatePlan, type FlowPlan } from "@/lib/flowBuilder";
+import { NODE_EDIT_RULES, validateEdit, type EditPlan, type EditTarget } from "@/lib/nodeEdit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -55,7 +57,8 @@ export async function POST(req: NextRequest) {
     const apiKey = await getKieToken(req);
     if (!apiKey) return NextResponse.json({ error: "No Kie.ai API key configured. Add one in Settings." }, { status: 401 });
 
-    const body = (await req.json()) as { messages?: Msg[]; rules?: string };
+    const body = (await req.json()) as { messages?: Msg[]; rules?: string; mode?: "build" | "edit"; targets?: EditTarget[] };
+    const editing = body.mode === "edit" && Array.isArray(body.targets) && body.targets.length > 0;
     const history = (body.messages ?? []).filter(
       (m) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.trim(),
     );
@@ -66,12 +69,15 @@ export async function POST(req: NextRequest) {
     const standing = body.rules?.trim()
       ? `\n\nTHE USER'S STANDING RULES (apply unless the request says otherwise):\n${body.rules.trim()}`
       : "";
-    const system = `${FLOW_BUILDER_RULES}\n\nCATALOG — the only models and settings that exist on this canvas:\n${catalogText()}${standing}`;
+    const catalog = `CATALOG — the only models and settings that exist on this canvas:\n${catalogText()}`;
+    const system = editing
+      ? `${NODE_EDIT_RULES}\n\n${catalog}${standing}\n\nSELECTED NODES:\n${JSON.stringify(body.targets, null, 2)}`
+      : `${FLOW_BUILDER_RULES}\n\n${catalog}${standing}`;
 
     // Kie's Claude endpoint takes the instructions as an opening exchange.
     const messages: Msg[] = [
       { role: "user", content: system },
-      { role: "assistant", content: "Understood. I will reply with one JSON plan and nothing else." },
+      { role: "assistant", content: `Understood. I will reply with one JSON ${editing ? "edit" : "plan"} and nothing else.` },
       ...history,
     ];
 
@@ -87,6 +93,19 @@ export async function POST(req: NextRequest) {
     }
 
     const reply = await readReply(upstream);
+
+    if (editing) {
+      let edit: EditPlan;
+      try {
+        edit = extractJson(reply) as EditPlan;
+      } catch {
+        return NextResponse.json({ error: "The model did not return a usable edit. Try again or rephrase.", raw: reply.slice(0, 2000) }, { status: 502 });
+      }
+      edit.changes ??= [];
+      edit.delete ??= [];
+      return NextResponse.json({ edit, validation: validateEdit(body.targets!, edit) });
+    }
+
     let plan: FlowPlan;
     try {
       plan = extractJson(reply) as FlowPlan;
