@@ -14,6 +14,7 @@ interface Ad {
   video_urls: string[] | null; image_urls: string[] | null; start_date: string | null; end_date: string | null;
   is_active: boolean | null; days_running: number | null; eu_total_reach: number | null;
   reach_male: number | null; reach_female: number | null; link_url: string | null; cta_text: string | null;
+  archived_media: { kind: string; url: string }[] | null;
 }
 interface Summary {
   competitors: Competitor[];
@@ -56,8 +57,9 @@ function GenderBar({ male }: { male: number | null }) {
 }
 
 function AdCard({ ad }: { ad: Ad }) {
-  const video = ad.video_urls?.[0];
-  const image = ad.image_urls?.[0];
+  // Archived copies in R2 never expire; Meta's own links stop working after ~4 days
+  const video = ad.archived_media?.find((m) => m.kind === "video")?.url ?? ad.video_urls?.[0];
+  const image = ad.archived_media?.find((m) => m.kind === "image")?.url ?? ad.image_urls?.[0];
   const total = (ad.reach_male ?? 0) + (ad.reach_female ?? 0);
   return (
     <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] overflow-hidden flex flex-col">

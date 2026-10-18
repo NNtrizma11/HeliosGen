@@ -44,8 +44,8 @@ function mapAd(a) {
   const body = s.body?.text || cards[0]?.body || null;
   const videos = [...(s.videos || []), ...cards]
     .map((v) => v.video_hd_url || v.video_sd_url).filter(Boolean);
-  const images = [...(s.images || []), ...cards]
-    .map((i) => i.original_image_url || i.resized_image_url).filter(Boolean);
+  const images = [...(s.images || []), ...cards, ...(s.videos || [])]
+    .map((i) => i.original_image_url || i.resized_image_url || i.video_preview_image_url).filter(Boolean);
 
   let male = 0, female = 0; const ages = {};
   for (const c of ai.age_country_gender_reach_breakdown || []) {
@@ -85,6 +85,76 @@ function mapAd(a) {
     last_seen_at: new Date().toISOString(),
     raw: a,
   };
+}
+
+/* ── Media archive (Cloudflare R2) ─────────────────────────────────────────────
+ * Meta's CDN links expire after ~4 days, so copies go to R2:
+ * every image, and videos only for ads that ran at least LAB_VIDEO_MIN_DAYS (default 14).
+ * Ads already archived are skipped, so each file is fetched once.
+ */
+const VIDEO_MIN_DAYS = Number(process.env.LAB_VIDEO_MIN_DAYS || 14);
+const MAX_ARCHIVE_MB = Number(process.env.LAB_MAX_ARCHIVE_MB || 3000);
+
+async function archiveMedia(ads) {
+  const { R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, R2_PUBLIC_URL } = process.env;
+  if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY || !R2_BUCKET_NAME || !R2_PUBLIC_URL) {
+    console.log("R2 not configured — skipping media archive.");
+    return { files: 0, bytes: 0 };
+  }
+  const { S3Client, PutObjectCommand } = await import("@aws-sdk/client-s3");
+  const s3 = new S3Client({
+    region: "auto",
+    endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    credentials: { accessKeyId: R2_ACCESS_KEY_ID, secretAccessKey: R2_SECRET_ACCESS_KEY },
+  });
+  const base = R2_PUBLIC_URL.replace(/\/$/, "");
+
+  const ids = ads.map((a) => a.ad_archive_id);
+  const done = new Set();
+  for (let i = 0; i < ids.length; i += 500) {
+    const { data } = await db.from("lab_ads").select("ad_archive_id, archived_media").in("ad_archive_id", ids.slice(i, i + 500));
+    for (const r of data ?? []) {
+      const kinds = new Set((r.archived_media ?? []).map((m) => m.kind));
+      const ad = ads.find((a) => a.ad_archive_id === r.ad_archive_id);
+      const wantsVideo = ad && ad.video_urls.length > 0 && (ad.days_running ?? 0) >= VIDEO_MIN_DAYS;
+      // Done when everything we want is stored: the video if it qualifies, otherwise the image
+      if (kinds.has("video") || (kinds.has("image") && !wantsVideo)) done.add(r.ad_archive_id);
+    }
+  }
+
+  let files = 0, bytes = 0;
+  const queue = ads.filter((a) => !done.has(a.ad_archive_id));
+  const worker = async () => {
+    while (queue.length && bytes < MAX_ARCHIVE_MB * 1e6) {
+      const ad = queue.shift();
+      const wantVideo = ad.video_urls.length > 0 && (ad.days_running ?? 0) >= VIDEO_MIN_DAYS;
+      const jobs = [
+        ...ad.image_urls.slice(0, 1).map((url) => ({ kind: "image", url })),
+        ...(wantVideo ? ad.video_urls.slice(0, 1).map((url) => ({ kind: "video", url })) : []),
+      ];
+      if (!jobs.length) continue;
+      const media = [];
+      for (const j of jobs) {
+        try {
+          const res = await fetch(j.url);
+          if (!res.ok) continue;
+          const buf = Buffer.from(await res.arrayBuffer());
+          const type = res.headers.get("content-type") || (j.kind === "video" ? "video/mp4" : "image/jpeg");
+          const ext = j.kind === "video" ? "mp4" : type.includes("png") ? "png" : type.includes("webp") ? "webp" : "jpg";
+          const key = `lab/${ad.page_id}/${ad.ad_archive_id}/${j.kind}.${ext}`;
+          await s3.send(new PutObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key, Body: buf, ContentType: type }));
+          media.push({ kind: j.kind, url: `${base}/${key}`, bytes: buf.length });
+          files++; bytes += buf.length;
+        } catch (e) {
+          console.warn(`Media failed for ${ad.ad_archive_id}: ${e.message}`);
+        }
+      }
+      if (media.length) await db.from("lab_ads").update({ archived_media: media }).eq("ad_archive_id", ad.ad_archive_id);
+    }
+  };
+  await Promise.all(Array.from({ length: 4 }, worker));
+  console.log(`Archived ${files} media files (${(bytes / 1e6).toFixed(1)} MB) to R2.`);
+  return { files, bytes };
 }
 
 async function main() {
@@ -146,6 +216,8 @@ async function main() {
     if (e) throw e;
   }
 
+  const archived = await archiveMedia(kept);
+
   const claimed = items.reduce((m, a) => Math.max(m, a.total || 0), 0) || null;
   await db.from("lab_runs").update({
     finished_at: new Date().toISOString(),
@@ -153,7 +225,7 @@ async function main() {
     ads_returned: kept.length,
     claimed_total: claimed,
     cost_usd: run.usageTotalUsd ?? run.stats?.computeUnits ?? null,
-    notes: `${items.length} items from Apify, ${kept.length} kept for ${competitors.length} competitors`,
+    notes: `${items.length} items from Apify, ${kept.length} kept for ${competitors.length} competitors; media archived: ${archived.files} files, ${(archived.bytes / 1e6).toFixed(1)} MB`,
   }).eq("id", runRow.id);
 
   console.log(`Stored ${kept.length} ads (${kept.filter((a) => a.is_active).length} active).`);
