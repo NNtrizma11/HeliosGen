@@ -131,14 +131,15 @@ async function archiveMedia(ads) {
   const s3 = await r2();
   if (!s3) { console.log("R2 not configured — skipping media archive."); return { files: 0, bytes: 0 }; }
 
-  const stored = new Map((await existingRows(ads.map((a) => a.ad_archive_id), "ad_archive_id, archived_media"))
-    .map((r) => [r.ad_archive_id, r.archived_media ?? []]));
+  const existing = await existingRows(ads.map((a) => a.ad_archive_id), "ad_archive_id, archived_media, keep_video");
+  const stored = new Map(existing.map((r) => [r.ad_archive_id, r.archived_media ?? []]));
+  const keepers = new Set(existing.filter((r) => r.keep_video).map((r) => r.ad_archive_id));
 
   let files = 0, bytes = 0;
   const queue = ads.filter((a) => {
     const kinds = new Set((stored.get(a.ad_archive_id) ?? []).map((m) => m.kind));
     const needImage = a.image_urls.length > 0 && !kinds.has("image");
-    const needVideo = a.video_urls.length > 0 && !kinds.has("video");
+    const needVideo = a.video_urls.length > 0 && !kinds.has("video") && (keepers.has(a.ad_archive_id) || a.is_active);
     return needImage || needVideo;
   });
 
@@ -149,7 +150,7 @@ async function archiveMedia(ads) {
       const kinds = new Set(media.map((m) => m.kind));
       const jobs = [
         ...(!kinds.has("image") ? ad.image_urls.slice(0, 1).map((url) => ({ kind: "image", url })) : []),
-        ...(!kinds.has("video") ? ad.video_urls.slice(0, 1).map((url) => ({ kind: "video", url })) : []),
+        ...(!kinds.has("video") && (keepers.has(ad.ad_archive_id) || ad.is_active) ? ad.video_urls.slice(0, 1).map((url) => ({ kind: "video", url })) : []),
       ];
       for (const j of jobs) {
         try {
@@ -175,47 +176,58 @@ async function archiveMedia(ads) {
 }
 
 /* ── Winner signals ───────────────────────────────────────────────────────────
- * An ad's video is kept permanently (keep_video) when ANY of these hold:
- *  - it ran 14+ days
- *  - its reach per day is in the top 20% of that advertiser's ads (EU ads only)
- *  - its concept was brought back: ads with the same copy or variant group started 14+ days apart
+ * Long-running alone is not enough: brands keep evergreen and retargeting ads up for months on
+ * tiny budgets, and reuse the same copy constantly. An ad's video is kept permanently
+ * (keep_video) when ANY of these hold, judged against that brand's own ads:
+ *  - EU brands (reach published): reach per day in the brand's top 20%, or
+ *    running 14+ days with reach per day at or above the brand's median
+ *  - Brands without reach data (US): running time in the brand's top 20% and at least 21 days
+ *  - its variant group (same creative) was relaunched 14+ days after it first started
  *  - its variant group has 3+ ads (they invested in sizes/placements)
  * keep_video never flips back to false.
  */
 async function markKeepers(pageIds) {
+  const q = (sorted, p) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] : Infinity);
   for (const pageId of pageIds) {
-    const { data: rows, error } = await db.from("lab_ads")
-      .select("ad_archive_id, collation_id, body, start_date, days_running, eu_total_reach, keep_video")
-      .eq("page_id", pageId);
-    if (error) throw error;
-
-    const perDay = rows.filter((r) => r.eu_total_reach && r.days_running)
-      .map((r) => r.eu_total_reach / r.days_running).sort((a, b) => a - b);
-    const p80 = perDay.length >= 5 ? perDay[Math.floor(perDay.length * 0.8)] : Infinity;
+    const rows = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await db.from("lab_ads")
+        .select("ad_archive_id, collation_id, start_date, days_running, eu_total_reach, keep_video")
+        .eq("page_id", pageId).range(from, from + 999);
+      if (error) throw error;
+      rows.push(...(data ?? []));
+      if (!data || data.length < 1000) break;
+    }
+    const withReach = rows.filter((r) => r.eu_total_reach && r.days_running);
+    const perDay = withReach.map((r) => r.eu_total_reach / r.days_running).sort((x, y) => x - y);
+    const hasReach = withReach.length >= Math.max(5, rows.length * 0.3);
+    const p80 = q(perDay, 0.8), p50 = q(perDay, 0.5);
+    const daysP80 = q(rows.map((r) => r.days_running ?? 0).sort((x, y) => x - y), 0.8);
 
     const groups = new Map();
-    for (const r of rows) {
-      for (const k of [r.collation_id && `c:${r.collation_id}`, r.body && `b:${r.body.split("\n")[0].trim().slice(0, 60)}`].filter(Boolean)) {
-        if (!groups.has(k)) groups.set(k, []);
-        groups.get(k).push(r);
-      }
+    for (const r of rows) if (r.collation_id) {
+      if (!groups.has(r.collation_id)) groups.set(r.collation_id, []);
+      groups.get(r.collation_id).push(r);
     }
-    const relaunched = new Set(), invested = new Set();
-    for (const [k, list] of groups) {
+    const signal = new Set();
+    for (const list of groups.values()) {
       const starts = list.map((r) => r.start_date).filter(Boolean).sort();
-      if (starts.length >= 2 && (new Date(starts.at(-1)) - new Date(starts[0])) / 864e5 >= 14) list.forEach((r) => relaunched.add(r.ad_archive_id));
-      if (k.startsWith("c:") && list.length >= 3) list.forEach((r) => invested.add(r.ad_archive_id));
+      const relaunched = starts.length >= 2 && (new Date(starts.at(-1)) - new Date(starts[0])) / 864e5 >= 14;
+      if (relaunched || list.length >= 3) list.forEach((r) => signal.add(r.ad_archive_id));
     }
 
-    const keep = rows.filter((r) => !r.keep_video && (
-      (r.days_running ?? 0) >= 14 ||
-      (r.eu_total_reach && r.days_running && r.eu_total_reach / r.days_running >= p80) ||
-      relaunched.has(r.ad_archive_id) || invested.has(r.ad_archive_id)
-    )).map((r) => r.ad_archive_id);
-    for (let i = 0; i < keep.length; i += 500) {
-      await db.from("lab_ads").update({ keep_video: true }).in("ad_archive_id", keep.slice(i, i + 500));
+    const keep = rows.filter((r) => {
+      if (r.keep_video) return false;
+      const days = r.days_running ?? 0;
+      const rpd = r.eu_total_reach && days ? r.eu_total_reach / days : null;
+      if (signal.has(r.ad_archive_id)) return true;
+      if (hasReach) return rpd != null && (rpd >= p80 || (days >= 14 && rpd >= p50));
+      return days >= 21 && days >= daysP80;
+    }).map((r) => r.ad_archive_id);
+    for (let i = 0; i < keep.length; i += 300) {
+      await db.from("lab_ads").update({ keep_video: true }).in("ad_archive_id", keep.slice(i, i + 300));
     }
-    if (keep.length) console.log(`${pageId}: ${keep.length} more ads marked as keepers.`);
+    console.log(`${pageId}: ${keep.length} more keepers (${rows.length} ads).`);
   }
 }
 
