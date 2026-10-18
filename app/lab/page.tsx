@@ -217,39 +217,40 @@ function AdDrawer({ ad, onClose }: { ad: Ad; onClose: () => void }) {
   );
 }
 
-function GroupTable({ title, rows, label, onView }: {
+function GroupTable({ title, rows, label, onView, compact = false }: {
   title: string; label: string;
   rows: ReturnType<typeof groupBy>;
   onView: (key: string) => void;
+  compact?: boolean;
 }) {
   const [page, setPage] = useState(0);
   const max = rows[0]?.score ?? 0;
   const slice = rows.slice(page * 15, page * 15 + 15);
   return (
-    <div className="rounded-xl border border-white/[0.08] overflow-x-auto">
+    <div className={`rounded-xl border border-white/[0.08] ${compact ? "overflow-hidden" : "overflow-x-auto"}`}>
       <div className="px-4 py-2 text-xs text-white/50 bg-white/[0.02] flex">
         <span>{title}</span><span className="ml-auto">{rows.length} items</span>
       </div>
-      <table className="w-full text-sm min-w-[820px]">
+      <table className={`w-full text-sm ${compact ? "table-fixed" : "min-w-[820px]"}`}>
         <thead>
           <tr className="text-left text-xs text-white/40">
             <th className="px-4 py-2 font-normal">{label}</th>
-            <th className="px-4 py-2 font-normal text-right">Ads</th>
-            <th className="px-4 py-2 font-normal text-right">Longest running</th>
-            <th className="px-4 py-2 font-normal text-right">Total running</th>
-            <th className="px-4 py-2 font-normal text-right">Reach</th>
-            <th className="px-4 py-2 font-normal text-right">Score</th>
+            <th className={`px-4 py-2 font-normal text-right ${compact ? "w-16" : ""}`}>Ads</th>
+            <th className={`px-4 py-2 font-normal text-right ${compact ? "w-24" : ""}`}>Longest</th>
+            {!compact && <th className="px-4 py-2 font-normal text-right">Total running</th>}
+            <th className={`px-4 py-2 font-normal text-right ${compact ? "w-20" : ""}`}>Reach</th>
+            {!compact && <th className="px-4 py-2 font-normal text-right">Score</th>}
           </tr>
         </thead>
         <tbody>
           {slice.map((r) => (
             <tr key={r.key} className="border-t border-white/[0.05] hover:bg-white/[0.02] cursor-pointer" onClick={() => onView(r.key)}>
-              <td className="px-4 py-2 max-w-[460px]"><div className="line-clamp-3 whitespace-pre-line text-white/85">{r.key}</div></td>
-              <td className="px-4 py-2 text-right text-white/70">{r.count}{r.active ? <span className="text-emerald-300/80"> · {r.active} live</span> : null}</td>
-              <td className="px-4 py-2 text-right text-white/70">{r.longest} days</td>
-              <td className="px-4 py-2 text-right text-white/50">{r.totalDays.toLocaleString()} days</td>
+              <td className="px-4 py-2 max-w-[460px]"><div className={`${compact ? "line-clamp-2 break-words" : "line-clamp-3"} whitespace-pre-line text-white/85`}>{r.key}</div></td>
+              <td className="px-4 py-2 text-right text-white/70">{r.count}{r.active && !compact ? <span className="text-emerald-300/80"> · {r.active} live</span> : null}</td>
+              <td className="px-4 py-2 text-right text-white/70 whitespace-nowrap">{r.longest} days</td>
+              {!compact && <td className="px-4 py-2 text-right text-white/50">{r.totalDays.toLocaleString()} days</td>}
               <td className="px-4 py-2 text-right font-medium">{fmt(r.reach || null)}</td>
-              <td className="px-4 py-2"><ScoreBar value={r.score} max={max} /></td>
+              {!compact && <td className="px-4 py-2"><ScoreBar value={r.score} max={max} /></td>}
             </tr>
           ))}
         </tbody>
@@ -309,9 +310,8 @@ function Timeline({ ads, onOpen }: { ads: Ad[]; onOpen: (a: Ad) => void }) {
 }
 
 /* ── Page ──────────────────────────────────────────────────────────────────── */
-export default function LabPage() {
+function BrandView({ pageId, brands, onBack }: { pageId: string; brands: Brand[]; onBack: () => void }) {
   const setAuthModalOpen = useWorkflowStore((s) => s.setAuthModalOpen);
-  const [pageId, setPageId] = useState("");
   const [tab, setTab] = useState<Tab>("overview");
   const [data, setData] = useState<Summary | null>(null);
   const [error, setError] = useState("");
@@ -401,7 +401,7 @@ export default function LabPage() {
   const copies = useMemo(() => groupBy(ads, (a) => (isTemplate(a.body) ? null : (a.body || "").trim() || null)), [ads]);
   const headlines = useMemo(() => groupBy(ads, (a) => (isTemplate(a.title) ? null : (a.title || "").trim() || null)), [ads]);
   const landing = useMemo(() => groupBy(ads, (a) => (a.link_url ? cleanUrl(a.link_url) : null)), [ads]);
-  const brand = data?.competitors.find((c) => c.page_id === pageId);
+  const brand = brands.find((c) => c.page_id === pageId);
 
   const TABS: [Tab, string][] = [
     ["overview", "Overview"], ["ads", "Ads"], ["concepts", "Concepts"], ["copies", "Ad copies"], ["headlines", "Headlines"],
@@ -410,16 +410,14 @@ export default function LabPage() {
   const selectCls = "bg-white/[0.04] border border-white/[0.08] rounded-lg px-2.5 py-1.5 text-xs";
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="h-full overflow-y-auto flex-1 min-w-0">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-4">
         {/* Header */}
         <div className="flex items-center gap-3 flex-wrap">
-          <h1 className="text-xl font-semibold">Creative Lab</h1>
-          <select value={pageId} onChange={(e) => { setPageId(e.target.value); setFocus(null); }} className={selectCls}>
-            <option value="">All brands</option>
-            {data?.competitors.map((c) => <option key={c.page_id} value={c.page_id}>{c.name}{c.market ? ` (${c.market})` : ""}</option>)}
-          </select>
-          {brand && <a href={`https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=ALL&view_all_page_id=${brand.page_id}`} target="_blank" rel="noreferrer" className="text-xs text-sky-300 hover:underline">Meta Ad Library ↗</a>}
+          <button onClick={onBack} className="text-xs text-white/50 hover:text-white">‹ Brand Spy</button>
+          <h1 className="text-xl font-semibold">{brand?.name ?? (pageId ? "Brand" : "All brands")}</h1>
+          {brand?.market && <span className="text-xs px-2 py-0.5 rounded bg-white/[0.06] text-white/60">{brand.market}</span>}
+          {pageId && <a href={`https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=ALL&view_all_page_id=${pageId}`} target="_blank" rel="noreferrer" className="text-xs text-sky-300 hover:underline">Meta Ad Library ↗</a>}
           <span className="text-xs text-white/40 ml-auto">
             {data?.lastRun?.finished_at ? `Last scan ${new Date(data.lastRun.finished_at).toLocaleString()}` : "No scan yet"} · weekly on Mondays
           </span>
@@ -476,8 +474,8 @@ export default function LabPage() {
               <Card label="Ad formats"><Bars rows={overview.formats} /></Card>
             </div>
             <div className="grid md:grid-cols-2 gap-3">
-              <GroupTable title="Top landing pages" label="Landing page" rows={landing.slice(0, 5)} onView={(k) => view(k, landing.find((r) => r.key === k)!.ads)} />
-              <GroupTable title="Top ad copies" label="Ad copy" rows={copies.slice(0, 5)} onView={(k) => view(firstLine(k), copies.find((r) => r.key === k)!.ads)} />
+              <GroupTable title="Top landing pages" label="Landing page" rows={landing.slice(0, 5)} compact onView={(k) => view(k, landing.find((r) => r.key === k)!.ads)} />
+              <GroupTable title="Top ad copies" label="Ad copy" rows={copies.slice(0, 5)} compact onView={(k) => view(firstLine(k), copies.find((r) => r.key === k)!.ads)} />
             </div>
             <div className="text-xs text-white/50 pt-1">Top ads</div>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
@@ -538,6 +536,197 @@ export default function LabPage() {
         )}
       </div>
       {open && <AdDrawer ad={open} onClose={() => setOpen(null)} />}
+    </div>
+  );
+}
+
+/* ── Brand Spy: list of tracked brands ────────────────────────────────────── */
+interface Brand {
+  page_id: string; name: string; market: string | null; kind: string | null; tier: string; active: boolean;
+  created_at: string; last_scan_at: string | null; backfilled_at: string | null;
+  ads_total: number; ads_active: number; reach_total: number;
+}
+
+async function authed(path: string, init: RequestInit = {}) {
+  const { data: auth } = await createClient().auth.getSession();
+  const token = auth.session?.access_token;
+  if (!token) throw new Error("Sign in to use the Lab.");
+  const res = await fetch(path, { ...init, headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...(init.headers ?? {}) } });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error ?? "Request failed");
+  return json;
+}
+
+function brandStatus(b: Brand): { label: string; cls: string } {
+  if (!b.active) return { label: "Paused", cls: "bg-amber-500/15 text-amber-300" };
+  if (!b.backfilled_at) return { label: "Queued for first scan", cls: "bg-sky-500/15 text-sky-300" };
+  return { label: "Up to date", cls: "bg-emerald-500/15 text-emerald-300" };
+}
+
+function AddBrand({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
+  const [url, setUrl] = useState("");
+  const [name, setName] = useState("");
+  const [market, setMarket] = useState("");
+  const [tier, setTier] = useState("A");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const field = "w-full bg-white/[0.04] border border-white/[0.1] rounded-lg px-3 py-2 text-sm";
+  const submit = async () => {
+    setBusy(true); setError("");
+    try { await authed("/api/lab/brands", { method: "POST", body: JSON.stringify({ url, name, market, tier }) }); onAdded(); onClose(); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-4" onClick={onClose}>
+      <div className="w-full max-w-md rounded-xl border border-white/[0.1] bg-[#141414] p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+        <div className="text-base font-semibold">Add brand</div>
+        <div className="text-xs text-white/50">Open the brand in the Meta Ad Library and copy the link. It contains <code>view_all_page_id=…</code>.</div>
+        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Ad Library link or page ID" className={field} />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Brand name" className={field} />
+        <div className="flex gap-2">
+          <input value={market} onChange={(e) => setMarket(e.target.value)} placeholder="Market (BG, RO, US…)" className={field} />
+          <select value={tier} onChange={(e) => setTier(e.target.value)} className={field}>
+            <option value="A">Tier A · weekly</option>
+            <option value="B">Tier B · every 4 weeks</option>
+          </select>
+        </div>
+        {error && <div className="text-xs text-red-400">{error}</div>}
+        <div className="flex justify-end gap-2 pt-1">
+          <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-xs text-white/60 hover:text-white">Cancel</button>
+          <button onClick={submit} disabled={busy} className="px-3 py-1.5 rounded-lg text-xs bg-sky-500 text-white disabled:opacity-50">{busy ? "Adding…" : "Add brand"}</button>
+        </div>
+        <div className="text-[11px] text-white/40">New brands get their full history on the next scan (Mondays 08:00).</div>
+      </div>
+    </div>
+  );
+}
+
+function BrandSpy({ brands, onOpen, onReload, onAdd }: { brands: Brand[]; onOpen: (id: string) => void; onReload: () => void; onAdd: () => void }) {
+  const [q, setQ] = useState("");
+  const [sort, setSort] = useState<"name" | "ads" | "added" | "updated">("name");
+  const list = brands
+    .filter((b) => b.name.toLowerCase().includes(q.trim().toLowerCase()))
+    .sort((a, b) => sort === "ads" ? b.ads_total - a.ads_total
+      : sort === "added" ? b.created_at.localeCompare(a.created_at)
+      : sort === "updated" ? (b.last_scan_at ?? "").localeCompare(a.last_scan_at ?? "")
+      : a.name.localeCompare(b.name));
+  const toggle = async (b: Brand) => { await authed("/api/lab/brands", { method: "PATCH", body: JSON.stringify({ page_id: b.page_id, active: !b.active }) }); onReload(); };
+  const th = (key: typeof sort, label: string, cls = "") => (
+    <th className={`px-4 py-2 font-normal cursor-pointer select-none hover:text-white ${cls}`} onClick={() => setSort(key)}>{label}{sort === key ? " ↓" : ""}</th>
+  );
+  return (
+    <div className="h-full overflow-y-auto flex-1 min-w-0">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-4">
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold">Brand Spy</h1>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search spied brands…" className="flex-1 max-w-md mx-auto bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-1.5 text-sm" />
+          <button onClick={onAdd} className="px-3 py-1.5 rounded-lg text-xs bg-sky-500 text-white">+ Add brand</button>
+        </div>
+        <div className="rounded-xl border border-white/[0.08] overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-white/40">
+                {th("name", "Name")}{th("ads", "Ads")}
+                <th className="px-4 py-2 font-normal hidden md:table-cell">Market · tier</th>
+                {th("added", "Added", "hidden md:table-cell")}{th("updated", "Last scanned", "hidden sm:table-cell")}
+                <th className="px-4 py-2 font-normal">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((b) => {
+                const st = brandStatus(b);
+                return (
+                  <tr key={b.page_id} className="border-t border-white/[0.05] hover:bg-white/[0.02] cursor-pointer" onClick={() => onOpen(b.page_id)}>
+                    <td className="px-4 py-2.5 font-medium">{b.name}{b.kind === "own" && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300">you</span>}</td>
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      <span className="text-emerald-300">● {b.ads_active.toLocaleString()}</span>
+                      <span className="text-white/40 ml-3">● {b.ads_total.toLocaleString()}</span>
+                    </td>
+                    <td className="px-4 py-2.5 text-white/60 hidden md:table-cell">{b.market ?? "—"} · {b.tier}</td>
+                    <td className="px-4 py-2.5 text-white/60 hidden md:table-cell">{new Date(b.created_at).toLocaleDateString()}</td>
+                    <td className="px-4 py-2.5 text-white/60 hidden sm:table-cell">{b.last_scan_at ? new Date(b.last_scan_at).toLocaleDateString() : "—"}</td>
+                    <td className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded text-xs whitespace-nowrap ${st.cls}`}>{st.label}</span>
+                        <button onClick={() => toggle(b)} className="text-[11px] text-white/40 hover:text-white">{b.active ? "Pause" : "Resume"}</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {!list.length && <tr><td colSpan={6} className="px-4 py-6 text-center text-white/40">No brands yet.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        <div className="text-[11px] text-white/40">● active ads · ● all ads collected (incl. stopped). Brands are rescanned on their tier interval; paused brands are skipped.</div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Lab shell: collapsible side panel + content ──────────────────────────── */
+export default function LabPage() {
+  const [brands, setBrands] = useState<Brand[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    try { setCollapsed(localStorage.getItem("lab.panel.collapsed") === "1"); } catch { /* storage unavailable */ }
+  }, []);
+  const togglePanel = () => setCollapsed((c) => {
+    try { localStorage.setItem("lab.panel.collapsed", c ? "0" : "1"); } catch { /* storage unavailable */ }
+    return !c;
+  });
+
+  const loadBrands = useCallback(async () => {
+    try { setError(""); setBrands((await authed("/api/lab/brands")).brands as Brand[]); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  }, []);
+  useEffect(() => { loadBrands(); }, [loadBrands]);
+
+  const navItem = (active: boolean) =>
+    `w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-left ${active ? "bg-sky-500/15 text-sky-300" : "text-white/70 hover:bg-white/[0.05] hover:text-white"}`;
+
+  return (
+    <div className="h-full flex min-h-0">
+      {/* Side panel */}
+      <aside className={`shrink-0 border-r border-white/[0.06] h-full flex flex-col transition-[width] duration-200 ${collapsed ? "w-12" : "w-60"}`}>
+        <div className="flex items-center h-12 px-3">
+          {!collapsed && <span className="text-sm font-semibold">Creative Lab</span>}
+          <button onClick={togglePanel} title={collapsed ? "Expand panel" : "Collapse panel"} className="ml-auto text-white/40 hover:text-white text-sm px-1">
+            {collapsed ? "»" : "«"}
+          </button>
+        </div>
+        {!collapsed && (
+          <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-1">
+            <button onClick={() => setSelected(null)} className={navItem(selected === null)}>Brand Spy</button>
+            <button onClick={() => setSelected("")} className={navItem(selected === "")}>All brands · ads</button>
+            <div className="pt-3 pb-1 px-3 flex items-center text-[11px] uppercase tracking-wide text-white/35">
+              <span>Brands</span>
+              <button onClick={() => setAdding(true)} className="ml-auto text-white/50 hover:text-white text-sm normal-case" title="Add brand">+</button>
+            </div>
+            {brands.filter((b) => b.active).map((b) => (
+              <button key={b.page_id} onClick={() => setSelected(b.page_id)} className={navItem(selected === b.page_id)}>
+                <span className="truncate">{b.name}</span>
+                <span className="ml-auto text-[11px] text-emerald-300/80">{b.ads_active}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </aside>
+
+      {/* Content */}
+      {error && selected === null ? (
+        <div className="p-6 text-sm text-red-400">{error}</div>
+      ) : selected === null ? (
+        <BrandSpy brands={brands} onOpen={setSelected} onReload={loadBrands} onAdd={() => setAdding(true)} />
+      ) : (
+        <BrandView key={selected} pageId={selected} brands={brands} onBack={() => setSelected(null)} />
+      )}
+      {adding && <AddBrand onClose={() => setAdding(false)} onAdded={loadBrands} />}
     </div>
   );
 }

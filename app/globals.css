@@ -1173,3 +1173,8 @@ body {
      outside the chip */
   box-shadow: -2px 0 0 rgba(255, 255, 255, 0.13), 2px 0 0 rgba(255, 255, 255, 0.13);
 }
+
+/* Native form controls (select menus, date pickers, scrollbars) follow the app's dark theme,
+   so dropdown options are never rendered white-on-white by the OS. */
+:root.dark { color-scheme: dark; }
+:root.dark option { background-color: #161616; color: #f5f5f5; }
