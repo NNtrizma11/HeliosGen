@@ -869,14 +869,12 @@ export function AppSidebar() {
             HeliosGen
           </span>
         </div>
-        {/* Collapsed: logo fades to trigger on hover */}
-        <div className="hidden group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:w-full group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:py-1">
-          <div className="relative group/logo-area w-10 h-10 flex items-center justify-center">
-            <div className="pointer-events-none transition-opacity duration-200 group-hover/logo-area:opacity-0">
-              <LogoIcon />
-            </div>
-            <SidebarTrigger className="absolute inset-0 opacity-0 group-hover/logo-area:opacity-100 transition-opacity duration-200 text-white/50 hover:text-white hover:bg-white/[0.05] w-full h-full rounded-xl p-0 [&_svg]:size-4" />
+        {/* Collapsed: logo, with an always-visible expand button under it */}
+        <div className="hidden group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:w-full group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:py-1">
+          <div className="w-10 h-10 flex items-center justify-center">
+            <LogoIcon />
           </div>
+          <SidebarTrigger title="Expand sidebar" className="text-white/40 hover:text-white hover:bg-white/[0.06] w-10 h-8 rounded-lg p-0 [&_svg]:size-4" />
         </div>
         <SidebarTrigger className="group-data-[collapsible=icon]:hidden text-white/30 hover:text-white/70 hover:bg-white/[0.05] transition-colors p-1.5 rounded-lg -mr-1 [&_svg]:size-4" />
       </SidebarHeader>
