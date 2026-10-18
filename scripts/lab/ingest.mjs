@@ -85,7 +85,7 @@ function mapAd(a) {
     target_locations: ai.location_audience ?? null,
     last_seen_at: new Date().toISOString(),
     ended_detected: false,
-    raw: a,
+    collation_count: a.collation_count ?? null,
   };
 }
 
@@ -262,8 +262,10 @@ async function runActor(competitors, activeStatus, maxAds, maxCost) {
   // power of two: use the largest power of two <= 512 MB x URLs, capped at 4 GB.
   let memory = 512;
   while (memory * 2 <= Math.min(4096, 512 * competitors.length)) memory *= 2;
-  const started = await apify(`/acts/${ACTOR}/runs?maxTotalChargeUsd=${maxCost}&memory=${memory}`, { method: "POST", body: JSON.stringify(input) });
-  const runId = started.data.id;
+  // LAB_REUSE_APIFY_RUN=<runId> re-processes a finished run instead of scraping again (no new Apify cost)
+  const reuse = process.env.LAB_REUSE_APIFY_RUN;
+  const runId = reuse || (await apify(`/acts/${ACTOR}/runs?maxTotalChargeUsd=${maxCost}&memory=${memory}`, { method: "POST", body: JSON.stringify(input) })).data.id;
+  if (reuse) console.log(`Re-using Apify run ${reuse}`);
   console.log(`Apify run ${runId} (${activeStatus}, ${memory} MB) started for ${competitors.length} brands`);
   let run;
   for (;;) {
@@ -282,17 +284,19 @@ async function runActor(competitors, activeStatus, maxAds, maxCost) {
 }
 
 async function storeAds(kept, runRowId) {
-  for (let i = 0; i < kept.length; i += 200) {
-    const { error } = await db.from("lab_ads").upsert(kept.slice(i, i + 200), { onConflict: "ad_archive_id" });
+  // Small batches keep each statement well under Supabase's statement timeout
+  const rows = kept.map(({ collation_count, ...r }) => r);
+  for (let i = 0; i < rows.length; i += 50) {
+    const { error } = await db.from("lab_ads").upsert(rows.slice(i, i + 50), { onConflict: "ad_archive_id" });
     if (error) throw error;
   }
   const snaps = kept.map((a) => ({
     ad_archive_id: a.ad_archive_id, run_id: runRowId, snapshot_date: today,
     is_active: a.is_active, end_date: a.end_date, eu_total_reach: a.eu_total_reach,
-    collation_count: a.raw.collation_count ?? null,
+    collation_count: a.collation_count ?? null,
   }));
-  for (let i = 0; i < snaps.length; i += 500) {
-    const { error } = await db.from("lab_ad_snapshots").upsert(snaps.slice(i, i + 500), { onConflict: "ad_archive_id,snapshot_date" });
+  for (let i = 0; i < snaps.length; i += 200) {
+    const { error } = await db.from("lab_ad_snapshots").upsert(snaps.slice(i, i + 200), { onConflict: "ad_archive_id,snapshot_date" });
     if (error) throw error;
   }
 }

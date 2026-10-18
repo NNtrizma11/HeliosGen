@@ -15,6 +15,8 @@ interface AdRow {
   is_active: boolean | null; days_running: number | null; eu_total_reach: number | null;
   reach_male: number | null; reach_female: number | null; reach_by_age: Record<string, number> | null;
   last_seen_at: string; archived_media: { kind: string; url: string }[] | null;
+  platforms: string[] | null; target_locations: { name: string; excluded?: boolean }[] | null;
+  ended_detected: boolean | null; keep_video: boolean | null;
 }
 
 /** Group key for a concept: first line of the copy without trailing emoji/punctuation. */
@@ -38,15 +40,20 @@ export async function GET(req: NextRequest) {
     .from("lab_competitors").select("page_id, name, market, kind, active").order("name");
   if (cErr) return NextResponse.json({ error: cErr.message }, { status: 500 });
 
-  let q = supabaseAdmin
-    .from("lab_ads")
-    .select("ad_archive_id, page_id, collation_id, display_format, body, title, cta_text, link_url, video_urls, image_urls, start_date, end_date, is_active, days_running, eu_total_reach, reach_male, reach_female, reach_by_age, last_seen_at, archived_media")
-    .order("eu_total_reach", { ascending: false, nullsFirst: false })
-    .limit(2000);
-  if (pageId) q = q.eq("page_id", pageId);
-  const { data, error } = await q;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  const ads = (data ?? []) as AdRow[];
+  // PostgREST returns at most 1,000 rows per request, so page through in chunks
+  const COLS = "ad_archive_id, page_id, collation_id, display_format, body, title, cta_text, link_url, video_urls, image_urls, start_date, end_date, is_active, days_running, eu_total_reach, reach_male, reach_female, reach_by_age, last_seen_at, archived_media, platforms, target_locations, ended_detected, keep_video";
+  const ads: AdRow[] = [];
+  for (let from = 0; from < 20000; from += 1000) {
+    let q = supabaseAdmin.from("lab_ads").select(COLS)
+      .order("eu_total_reach", { ascending: false, nullsFirst: false })
+      .order("ad_archive_id")
+      .range(from, from + 999);
+    if (pageId) q = q.eq("page_id", pageId);
+    const { data, error } = await q;
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    ads.push(...((data ?? []) as AdRow[]));
+    if (!data || data.length < 1000) break;
+  }
 
   const { data: lastRun } = await supabaseAdmin
     .from("lab_runs").select("finished_at, status, ads_returned, cost_usd")
