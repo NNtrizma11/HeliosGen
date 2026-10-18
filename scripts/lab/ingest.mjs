@@ -258,9 +258,13 @@ async function runActor(competitors, activeStatus, maxAds, maxCost) {
       url: `https://www.facebook.com/ads/library/?active_status=${activeStatus}&ad_type=all&country=ALL&view_all_page_id=${c.page_id}`,
     })),
   };
-  const started = await apify(`/acts/${ACTOR}/runs?maxTotalChargeUsd=${maxCost}`, { method: "POST", body: JSON.stringify(input) });
+  // The actor requires at least one input URL per 512 MB of memory, and Apify memory must be a
+  // power of two: use the largest power of two <= 512 MB x URLs, capped at 4 GB.
+  let memory = 512;
+  while (memory * 2 <= Math.min(4096, 512 * competitors.length)) memory *= 2;
+  const started = await apify(`/acts/${ACTOR}/runs?maxTotalChargeUsd=${maxCost}&memory=${memory}`, { method: "POST", body: JSON.stringify(input) });
   const runId = started.data.id;
-  console.log(`Apify run ${runId} (${activeStatus}) started for ${competitors.length} brands`);
+  console.log(`Apify run ${runId} (${activeStatus}, ${memory} MB) started for ${competitors.length} brands`);
   let run;
   for (;;) {
     await sleep(15000);
@@ -341,7 +345,10 @@ async function scanGroup(competitors, mode) {
   const kept = items.filter((a) => a.ad_archive_id).map(mapAd).filter((a) => tracked.has(a.page_id));
   await storeAds(kept, runRow.id);
 
-  const succeeded = run.status === "SUCCEEDED";
+  // A run that returns nothing at all (e.g. rejected input, blocked scan) is not trusted:
+  // it must not mark brands as backfilled or ads as ended.
+  if (run.status === "SUCCEEDED" && items.length === 0) console.warn(`Apify run ${runId} returned no items: ${run.statusMessage ?? ""}`);
+  const succeeded = run.status === "SUCCEEDED" && items.length > 0;
   const endInfo = !backfill && succeeded ? await detectEnded(competitors, kept, runRow.id) : { ended: 0, notes: [] };
 
   await markKeepers([...tracked]);
@@ -355,7 +362,7 @@ async function scanGroup(competitors, mode) {
   }
   await db.from("lab_runs").update({
     finished_at: now,
-    status: succeeded ? "succeeded" : run.status.toLowerCase(),
+    status: succeeded ? "succeeded" : items.length === 0 && run.status === "SUCCEEDED" ? "empty" : run.status.toLowerCase(),
     ads_returned: kept.length,
     claimed_total: items.reduce((m, a) => Math.max(m, a.total || 0), 0) || null,
     cost_usd: run.usageTotalUsd ?? null,
@@ -364,6 +371,7 @@ async function scanGroup(competitors, mode) {
       backfill ? null : `${endInfo.ended} ads detected as ended`,
       `media archived: ${archived.files} files, ${(archived.bytes / 1e6).toFixed(1)} MB`,
       ...endInfo.notes,
+      !succeeded && run.statusMessage ? `actor: ${run.statusMessage}` : null,
     ].filter(Boolean).join("; "),
   }).eq("id", runRow.id);
   console.log(`${mode}: stored ${kept.length} ads, ${endInfo.ended} ended, ${archived.files} media files.`);
