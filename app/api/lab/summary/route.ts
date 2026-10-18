@@ -14,7 +14,7 @@ interface AdRow {
   video_urls: string[] | null; image_urls: string[] | null; start_date: string | null; end_date: string | null;
   is_active: boolean | null; days_running: number | null; eu_total_reach: number | null;
   reach_male: number | null; reach_female: number | null; reach_by_age: Record<string, number> | null;
-  last_seen_at: string;
+  last_seen_at: string; archived_media: { kind: string; url: string }[] | null;
 }
 
 /** Group key for a concept: first line of the copy without trailing emoji/punctuation. */
@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
 
   let q = supabaseAdmin
     .from("lab_ads")
-    .select("ad_archive_id, page_id, collation_id, display_format, body, title, cta_text, link_url, video_urls, image_urls, start_date, end_date, is_active, days_running, eu_total_reach, reach_male, reach_female, reach_by_age, last_seen_at")
+    .select("ad_archive_id, page_id, collation_id, display_format, body, title, cta_text, link_url, video_urls, image_urls, start_date, end_date, is_active, days_running, eu_total_reach, reach_male, reach_female, reach_by_age, last_seen_at, archived_media")
     .order("eu_total_reach", { ascending: false, nullsFirst: false })
     .limit(2000);
   if (pageId) q = q.eq("page_id", pageId);
