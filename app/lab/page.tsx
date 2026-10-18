@@ -310,8 +310,11 @@ function Timeline({ ads, onOpen }: { ads: Ad[]; onOpen: (a: Ad) => void }) {
 }
 
 /* ── Page ──────────────────────────────────────────────────────────────────── */
-function BrandView({ pageId, brands, onBack }: { pageId: string; brands: Brand[]; onBack: () => void }) {
+function BrandView({ pageId, pageIds, title, brands, onBack }: {
+  pageId: string; pageIds?: string[]; title?: string; brands: Brand[]; onBack: () => void;
+}) {
   const setAuthModalOpen = useWorkflowStore((s) => s.setAuthModalOpen);
+  const idsKey = (pageIds ?? []).join(",");
   const [tab, setTab] = useState<Tab>("overview");
   const [data, setData] = useState<Summary | null>(null);
   const [error, setError] = useState("");
@@ -333,7 +336,8 @@ function BrandView({ pageId, brands, onBack }: { pageId: string; brands: Brand[]
       const { data: auth } = await createClient().auth.getSession();
       const token = auth.session?.access_token;
       if (!token) { setAuthModalOpen(true); setError("Sign in to see the Lab."); return; }
-      const res = await fetch(`/api/lab/summary${pageId ? `?page_id=${pageId}` : ""}`, { headers: { Authorization: `Bearer ${token}` } });
+      const qs = pageId ? `?page_id=${pageId}` : idsKey ? `?page_ids=${idsKey}` : "";
+      const res = await fetch(`/api/lab/summary${qs}`, { headers: { Authorization: `Bearer ${token}` } });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Could not load the Lab");
       setData(json as Summary);
@@ -342,7 +346,7 @@ function BrandView({ pageId, brands, onBack }: { pageId: string; brands: Brand[]
     } finally {
       setLoading(false);
     }
-  }, [pageId, setAuthModalOpen]);
+  }, [pageId, idsKey, setAuthModalOpen]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -411,11 +415,12 @@ function BrandView({ pageId, brands, onBack }: { pageId: string; brands: Brand[]
 
   return (
     <div className="h-full overflow-y-auto flex-1 min-w-0">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-4">
+      <div className="max-w-[1600px] mx-auto px-4 lg:px-8 py-6 space-y-4">
         {/* Header */}
         <div className="flex items-center gap-3 flex-wrap">
           <button onClick={onBack} className="text-xs text-white/50 hover:text-white">‹ Brand Spy</button>
-          <h1 className="text-xl font-semibold">{brand?.name ?? (pageId ? "Brand" : "All brands")}</h1>
+          <h1 className="text-xl font-semibold">{brand?.name ?? title ?? (pageId ? "Brand" : "All brands")}</h1>
+          {!pageId && pageIds?.length ? <span className="text-xs text-white/40">{pageIds.length} brands</span> : null}
           {brand?.market && <span className="text-xs px-2 py-0.5 rounded bg-white/[0.06] text-white/60">{brand.market}</span>}
           {pageId && <a href={`https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=ALL&view_all_page_id=${pageId}`} target="_blank" rel="noreferrer" className="text-xs text-sky-300 hover:underline">Meta Ad Library ↗</a>}
           <span className="text-xs text-white/40 ml-auto">
@@ -425,7 +430,7 @@ function BrandView({ pageId, brands, onBack }: { pageId: string; brands: Brand[]
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 border-b border-white/[0.06] overflow-x-auto">
+        <div className="flex gap-1 border-b border-white/[0.06] overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {TABS.map(([t, l]) => (
             <button key={t} onClick={() => setTab(t)}
               className={`px-3 py-2 text-xs whitespace-nowrap border-b-2 -mb-px ${tab === t ? "border-sky-400 text-white" : "border-transparent text-white/50 hover:text-white"}`}>{l}</button>
@@ -544,8 +549,9 @@ function BrandView({ pageId, brands, onBack }: { pageId: string; brands: Brand[]
 interface Brand {
   page_id: string; name: string; market: string | null; kind: string | null; tier: string; active: boolean;
   created_at: string; last_scan_at: string | null; backfilled_at: string | null;
-  ads_total: number; ads_active: number; reach_total: number;
+  ads_total: number; ads_active: number; reach_total: number; folder_id: number | null;
 }
+interface Folder { id: number; name: string; position: number }
 
 async function authed(path: string, init: RequestInit = {}) {
   const { data: auth } = await createClient().auth.getSession();
@@ -563,7 +569,8 @@ function brandStatus(b: Brand): { label: string; cls: string } {
   return { label: "Up to date", cls: "bg-emerald-500/15 text-emerald-300" };
 }
 
-function AddBrand({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
+function AddBrand({ folders, onClose, onAdded }: { folders: Folder[]; onClose: () => void; onAdded: () => void }) {
+  const [folderId, setFolderId] = useState<string>(folders[0] ? String(folders[0].id) : "");
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
   const [market, setMarket] = useState("");
@@ -573,7 +580,7 @@ function AddBrand({ onClose, onAdded }: { onClose: () => void; onAdded: () => vo
   const field = "w-full bg-white/[0.04] border border-white/[0.1] rounded-lg px-3 py-2 text-sm";
   const submit = async () => {
     setBusy(true); setError("");
-    try { await authed("/api/lab/brands", { method: "POST", body: JSON.stringify({ url, name, market, tier }) }); onAdded(); onClose(); }
+    try { await authed("/api/lab/brands", { method: "POST", body: JSON.stringify({ url, name, market, tier, folder_id: folderId || null }) }); onAdded(); onClose(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   };
@@ -591,6 +598,10 @@ function AddBrand({ onClose, onAdded }: { onClose: () => void; onAdded: () => vo
             <option value="B">Tier B · every 4 weeks</option>
           </select>
         </div>
+        <select value={folderId} onChange={(e) => setFolderId(e.target.value)} className={field}>
+          <option value="">Folder: uncategorized</option>
+          {folders.map((f) => <option key={f.id} value={f.id}>Folder: {f.name}</option>)}
+        </select>
         {error && <div className="text-xs text-red-400">{error}</div>}
         <div className="flex justify-end gap-2 pt-1">
           <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-xs text-white/60 hover:text-white">Cancel</button>
@@ -602,73 +613,158 @@ function AddBrand({ onClose, onAdded }: { onClose: () => void; onAdded: () => vo
   );
 }
 
-function BrandSpy({ brands, onOpen, onReload, onAdd }: { brands: Brand[]; onOpen: (id: string) => void; onReload: () => void; onAdd: () => void }) {
-  const [q, setQ] = useState("");
-  const [sort, setSort] = useState<"name" | "ads" | "added" | "updated">("name");
-  const list = brands
-    .filter((b) => b.name.toLowerCase().includes(q.trim().toLowerCase()))
-    .sort((a, b) => sort === "ads" ? b.ads_total - a.ads_total
-      : sort === "added" ? b.created_at.localeCompare(a.created_at)
-      : sort === "updated" ? (b.last_scan_at ?? "").localeCompare(a.last_scan_at ?? "")
-      : a.name.localeCompare(b.name));
-  const toggle = async (b: Brand) => { await authed("/api/lab/brands", { method: "PATCH", body: JSON.stringify({ page_id: b.page_id, active: !b.active }) }); onReload(); };
-  const th = (key: typeof sort, label: string, cls = "") => (
-    <th className={`px-4 py-2 font-normal cursor-pointer select-none hover:text-white ${cls}`} onClick={() => setSort(key)}>{label}{sort === key ? " ↓" : ""}</th>
+
+const AVATAR_COLORS = ["#0ea5e9", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#14b8a6", "#ec4899", "#6366f1"];
+function BrandAvatar({ name, size = 26 }: { name: string; size?: number }) {
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const initials = name.replace(/\(.*?\)/g, "").split(/[\s.]+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  return (
+    <span className="inline-grid place-items-center rounded-full text-[10px] font-semibold text-white ring-2 ring-[#0B0E14] shrink-0"
+      style={{ width: size, height: size, background: AVATAR_COLORS[h % AVATAR_COLORS.length] }} title={name}>
+      {initials || "?"}
+    </span>
   );
+}
+
+function BrandRow({ b, folders, onOpen, onChanged }: { b: Brand; folders: Folder[]; onOpen: (id: string) => void; onChanged: () => void }) {
+  const st = brandStatus(b);
+  const patch = async (body: Record<string, unknown>) => { await authed("/api/lab/brands", { method: "PATCH", body: JSON.stringify({ page_id: b.page_id, ...body }) }); onChanged(); };
+  return (
+    <tr className="border-t border-white/[0.05] hover:bg-white/[0.02] cursor-pointer" onClick={() => onOpen(b.page_id)}>
+      <td className="px-4 py-2.5">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <BrandAvatar name={b.name} />
+          <span className="font-medium truncate">{b.name}</span>
+          {b.kind === "own" && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300">you</span>}
+        </div>
+      </td>
+      <td className="px-4 py-2.5 whitespace-nowrap">
+        <span className="text-emerald-300">● {b.ads_active.toLocaleString()}</span>
+        <span className="text-white/40 ml-3">● {b.ads_total.toLocaleString()}</span>
+      </td>
+      <td className="px-4 py-2.5 text-white/60 hidden lg:table-cell">{b.market ?? "—"} · Tier {b.tier}</td>
+      <td className="px-4 py-2.5 text-white/60 hidden md:table-cell">{new Date(b.created_at).toLocaleDateString()}</td>
+      <td className="px-4 py-2.5 text-white/60 hidden md:table-cell">{b.last_scan_at ? new Date(b.last_scan_at).toLocaleDateString() : "—"}</td>
+      <td className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={`px-2 py-0.5 rounded text-xs whitespace-nowrap ${st.cls}`}>{st.label}</span>
+          <button onClick={() => patch({ active: !b.active })} className="text-[11px] text-white/40 hover:text-white">{b.active ? "Pause" : "Resume"}</button>
+          <select value={b.folder_id ?? ""} onChange={(e) => patch({ folder_id: e.target.value || null })}
+            className="bg-transparent text-[11px] text-white/40 hover:text-white border-0 p-0 cursor-pointer" title="Move to folder">
+            <option value="">Move: uncategorized</option>
+            {folders.map((f) => <option key={f.id} value={f.id}>Move: {f.name}</option>)}
+          </select>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function BrandSpy({ brands, folders, onOpen, onBrowse, onReload, onAdd }: {
+  brands: Brand[]; folders: Folder[];
+  onOpen: (id: string) => void; onBrowse: (name: string, ids: string[]) => void;
+  onReload: () => void; onAdd: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const [openFolders, setOpenFolders] = useState<Set<string>>(new Set());
+  const [creating, setCreating] = useState(false);
+  const [folderName, setFolderName] = useState("");
+  const [err, setErr] = useState("");
+  const search = q.trim().toLowerCase();
+  const match = (b: Brand) => !search || b.name.toLowerCase().includes(search);
+  const groups = [
+    ...folders.map((f) => ({ key: String(f.id), name: f.name, brands: brands.filter((b) => b.folder_id === f.id && match(b)) })),
+    { key: "none", name: "Uncategorized", brands: brands.filter((b) => !b.folder_id && match(b)) },
+  ].filter((g) => g.key !== "none" || g.brands.length || !search);
+  const isOpen = (k: string) => openFolders.has(k) || !!search;
+  const toggle = (k: string) => setOpenFolders((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  const createFolder = async () => {
+    setErr("");
+    try { await authed("/api/lab/brands", { method: "POST", body: JSON.stringify({ folder: folderName }) }); setFolderName(""); setCreating(false); onReload(); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  };
   return (
     <div className="h-full overflow-y-auto flex-1 min-w-0">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-4">
-        <div className="flex items-center gap-3">
+      <div className="max-w-[1600px] mx-auto px-4 lg:px-8 py-6 space-y-4">
+        <div className="flex items-center gap-3 flex-wrap">
           <h1 className="text-xl font-semibold">Brand Spy</h1>
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search spied brands…" className="flex-1 max-w-md mx-auto bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-1.5 text-sm" />
-          <button onClick={onAdd} className="px-3 py-1.5 rounded-lg text-xs bg-sky-500 text-white">+ Add brand</button>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search spied brands…"
+            className="order-3 w-full sm:order-none sm:w-auto sm:flex-1 sm:max-w-md sm:mx-auto bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-1.5 text-sm" />
+          <button onClick={onAdd} className="ml-auto sm:ml-0 px-3 py-1.5 rounded-lg text-xs bg-sky-500 text-white">+ Add brand</button>
         </div>
-        <div className="rounded-xl border border-white/[0.08] overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-white/40">
-                {th("name", "Name")}{th("ads", "Ads")}
-                <th className="px-4 py-2 font-normal hidden md:table-cell">Market · tier</th>
-                {th("added", "Added", "hidden md:table-cell")}{th("updated", "Last scanned", "hidden sm:table-cell")}
-                <th className="px-4 py-2 font-normal">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {list.map((b) => {
-                const st = brandStatus(b);
-                return (
-                  <tr key={b.page_id} className="border-t border-white/[0.05] hover:bg-white/[0.02] cursor-pointer" onClick={() => onOpen(b.page_id)}>
-                    <td className="px-4 py-2.5 font-medium">{b.name}{b.kind === "own" && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300">you</span>}</td>
-                    <td className="px-4 py-2.5 whitespace-nowrap">
-                      <span className="text-emerald-300">● {b.ads_active.toLocaleString()}</span>
-                      <span className="text-white/40 ml-3">● {b.ads_total.toLocaleString()}</span>
-                    </td>
-                    <td className="px-4 py-2.5 text-white/60 hidden md:table-cell">{b.market ?? "—"} · {b.tier}</td>
-                    <td className="px-4 py-2.5 text-white/60 hidden md:table-cell">{new Date(b.created_at).toLocaleDateString()}</td>
-                    <td className="px-4 py-2.5 text-white/60 hidden sm:table-cell">{b.last_scan_at ? new Date(b.last_scan_at).toLocaleDateString() : "—"}</td>
-                    <td className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center gap-2">
-                        <span className={`px-2 py-0.5 rounded text-xs whitespace-nowrap ${st.cls}`}>{st.label}</span>
-                        <button onClick={() => toggle(b)} className="text-[11px] text-white/40 hover:text-white">{b.active ? "Pause" : "Resume"}</button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-              {!list.length && <tr><td colSpan={6} className="px-4 py-6 text-center text-white/40">No brands yet.</td></tr>}
-            </tbody>
-          </table>
+
+        <div className="space-y-2">
+          {groups.map((g) => (
+            <div key={g.key} className="rounded-xl border border-white/[0.08] bg-white/[0.015] overflow-hidden">
+              <div className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-white/[0.02]" onClick={() => toggle(g.key)}>
+                <span className={`text-white/40 transition-transform ${isOpen(g.key) ? "rotate-90" : ""}`}>›</span>
+                <span className="text-white/50">▤</span>
+                <span className="font-medium">{g.name}</span>
+                <span className="text-[11px] px-1.5 py-0.5 rounded bg-white/[0.06] text-white/50">{g.brands.length}</span>
+                <div className="ml-auto flex items-center gap-3">
+                  <div className="hidden sm:flex -space-x-1.5">
+                    {g.brands.slice(0, 10).map((b) => <BrandAvatar key={b.page_id} name={b.name} size={24} />)}
+                    {g.brands.length > 10 && <span className="pl-3 text-xs text-white/40 self-center">+{g.brands.length - 10}</span>}
+                  </div>
+                  {g.brands.length > 0 && (
+                    <button onClick={(e) => { e.stopPropagation(); onBrowse(g.name, g.brands.map((b) => b.page_id)); }}
+                      className="px-2.5 py-1 rounded-lg text-xs border border-white/[0.1] text-white/70 hover:text-white hover:bg-white/[0.05] whitespace-nowrap"
+                      title="Browse all ads from brands in this folder">▦ Browse ads</button>
+                  )}
+                </div>
+              </div>
+              {isOpen(g.key) && (
+                <table className="w-full text-sm table-fixed">
+                  <colgroup>
+                    <col /><col className="w-[150px]" /><col className="hidden lg:table-column w-[120px]" />
+                    <col className="hidden md:table-column w-[110px]" /><col className="hidden md:table-column w-[110px]" /><col className="w-[260px]" />
+                  </colgroup>
+                  <thead>
+                    <tr className="text-left text-xs text-white/40 border-t border-white/[0.05]">
+                      <th className="px-4 py-2 font-normal">Name</th><th className="px-4 py-2 font-normal">Ads</th>
+                      <th className="px-4 py-2 font-normal hidden lg:table-cell">Market</th>
+                      <th className="px-4 py-2 font-normal hidden md:table-cell">Added</th>
+                      <th className="px-4 py-2 font-normal hidden md:table-cell">Last scanned</th>
+                      <th className="px-4 py-2 font-normal">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {g.brands.map((b) => <BrandRow key={b.page_id} b={b} folders={folders} onOpen={onOpen} onChanged={onReload} />)}
+                    {!g.brands.length && <tr><td colSpan={6} className="px-4 py-4 text-center text-xs text-white/40">No brands in this folder yet. Add one, or move a brand here.</td></tr>}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          ))}
         </div>
-        <div className="text-[11px] text-white/40">● active ads · ● all ads collected (incl. stopped). Brands are rescanned on their tier interval; paused brands are skipped.</div>
+
+        <div className="flex justify-center">
+          {creating ? (
+            <div className="flex gap-2 items-center">
+              <input autoFocus value={folderName} onChange={(e) => setFolderName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && createFolder()}
+                placeholder="Folder name" className="bg-white/[0.04] border border-white/[0.1] rounded-lg px-3 py-1.5 text-sm" />
+              <button onClick={createFolder} className="px-3 py-1.5 rounded-lg text-xs bg-sky-500 text-white">Create</button>
+              <button onClick={() => { setCreating(false); setErr(""); }} className="px-3 py-1.5 rounded-lg text-xs text-white/50 hover:text-white">Cancel</button>
+              {err && <span className="text-xs text-red-400">{err}</span>}
+            </div>
+          ) : (
+            <button onClick={() => setCreating(true)} className="px-4 py-2 rounded-lg text-sm border border-white/[0.1] text-white/70 hover:text-white hover:bg-white/[0.04]">+ Create new folder</button>
+          )}
+        </div>
+        <div className="text-[11px] text-white/40 text-center">● active ads · ● all ads collected (incl. stopped). Brands are rescanned on their tier interval; paused brands are skipped.</div>
       </div>
     </div>
   );
 }
 
 /* ── Lab shell: collapsible side panel + content ──────────────────────────── */
+type View = { kind: "spy" } | { kind: "brand"; id: string } | { kind: "folder"; name: string; ids: string[] } | { kind: "all" };
+
 export default function LabPage() {
   const [brands, setBrands] = useState<Brand[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [view, setView] = useState<View>({ kind: "spy" });
   const [collapsed, setCollapsed] = useState(false);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
@@ -682,51 +778,62 @@ export default function LabPage() {
   });
 
   const loadBrands = useCallback(async () => {
-    try { setError(""); setBrands((await authed("/api/lab/brands")).brands as Brand[]); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    try {
+      setError("");
+      const json = await authed("/api/lab/brands");
+      setBrands(json.brands as Brand[]);
+      setFolders(json.folders as Folder[]);
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }, []);
   useEffect(() => { loadBrands(); }, [loadBrands]);
 
   const navItem = (active: boolean) =>
     `w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-left ${active ? "bg-sky-500/15 text-sky-300" : "text-white/70 hover:bg-white/[0.05] hover:text-white"}`;
+  const folderBrands = (f: Folder) => brands.filter((b) => b.folder_id === f.id).map((b) => b.page_id);
+  const back = () => setView({ kind: "spy" });
 
   return (
     <div className="h-full flex min-h-0">
-      {/* Side panel */}
-      <aside className={`shrink-0 border-r border-white/[0.06] h-full flex flex-col transition-[width] duration-200 ${collapsed ? "w-12" : "w-60"}`}>
-        <div className="flex items-center h-12 px-3">
+      {/* Side panel — collapses to a thin rail that always keeps its expand button */}
+      <aside className={`shrink-0 border-r border-white/[0.06] h-full flex flex-col transition-[width] duration-200 ${collapsed ? "w-11" : "w-56"}`}>
+        <div className={`flex items-center h-12 ${collapsed ? "justify-center" : "px-3"}`}>
           {!collapsed && <span className="text-sm font-semibold">Creative Lab</span>}
-          <button onClick={togglePanel} title={collapsed ? "Expand panel" : "Collapse panel"} className="ml-auto text-white/40 hover:text-white text-sm px-1">
+          <button onClick={togglePanel} title={collapsed ? "Expand panel" : "Collapse panel"}
+            className={`${collapsed ? "" : "ml-auto"} w-7 h-7 grid place-items-center rounded-md text-white/50 hover:text-white hover:bg-white/[0.06]`}>
             {collapsed ? "»" : "«"}
           </button>
         </div>
         {!collapsed && (
           <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-1">
-            <button onClick={() => setSelected(null)} className={navItem(selected === null)}>Brand Spy</button>
-            <button onClick={() => setSelected("")} className={navItem(selected === "")}>All brands · ads</button>
-            <div className="pt-3 pb-1 px-3 flex items-center text-[11px] uppercase tracking-wide text-white/35">
-              <span>Brands</span>
-              <button onClick={() => setAdding(true)} className="ml-auto text-white/50 hover:text-white text-sm normal-case" title="Add brand">+</button>
-            </div>
-            {brands.filter((b) => b.active).map((b) => (
-              <button key={b.page_id} onClick={() => setSelected(b.page_id)} className={navItem(selected === b.page_id)}>
-                <span className="truncate">{b.name}</span>
-                <span className="ml-auto text-[11px] text-emerald-300/80">{b.ads_active}</span>
+            <button onClick={back} className={navItem(view.kind === "spy")}>Brand Spy</button>
+            <button onClick={() => setView({ kind: "all" })} className={navItem(view.kind === "all")}>All ads</button>
+            <div className="pt-3 pb-1 px-3 text-[11px] uppercase tracking-wide text-white/35">Folders</div>
+            {folders.map((f) => (
+              <button key={f.id} onClick={() => setView({ kind: "folder", name: f.name, ids: folderBrands(f) })}
+                className={navItem(view.kind === "folder" && view.name === f.name)}>
+                <span className="text-white/40">▤</span><span className="truncate">{f.name}</span>
+                <span className="ml-auto text-[11px] text-white/40">{folderBrands(f).length}</span>
               </button>
             ))}
+            <button onClick={() => setAdding(true)} className="w-full px-3 py-2 text-left text-xs text-white/40 hover:text-white">+ Add brand</button>
           </div>
         )}
       </aside>
 
       {/* Content */}
-      {error && selected === null ? (
+      {error && view.kind === "spy" ? (
         <div className="p-6 text-sm text-red-400">{error}</div>
-      ) : selected === null ? (
-        <BrandSpy brands={brands} onOpen={setSelected} onReload={loadBrands} onAdd={() => setAdding(true)} />
+      ) : view.kind === "spy" ? (
+        <BrandSpy brands={brands} folders={folders} onReload={loadBrands} onAdd={() => setAdding(true)}
+          onOpen={(id) => setView({ kind: "brand", id })} onBrowse={(name, ids) => setView({ kind: "folder", name, ids })} />
+      ) : view.kind === "brand" ? (
+        <BrandView key={view.id} pageId={view.id} brands={brands} onBack={back} />
+      ) : view.kind === "folder" ? (
+        <BrandView key={`f-${view.name}`} pageId="" pageIds={view.ids.length ? view.ids : ["0"]} title={view.name} brands={brands} onBack={back} />
       ) : (
-        <BrandView key={selected} pageId={selected} brands={brands} onBack={() => setSelected(null)} />
+        <BrandView key="all" pageId="" title="All ads" brands={brands} onBack={back} />
       )}
-      {adding && <AddBrand onClose={() => setAdding(false)} onAdded={loadBrands} />}
+      {adding && <AddBrand folders={folders} onClose={() => setAdding(false)} onAdded={loadBrands} />}
     </div>
   );
 }

@@ -35,6 +35,7 @@ export async function GET(req: NextRequest) {
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const pageId = req.nextUrl.searchParams.get("page_id");
+  const pageIds = (req.nextUrl.searchParams.get("page_ids") ?? "").split(",").filter((x) => /^\d+$/.test(x));
 
   const { data: competitors, error: cErr } = await supabaseAdmin
     .from("lab_competitors").select("page_id, name, market, kind, active").order("name");
@@ -49,6 +50,7 @@ export async function GET(req: NextRequest) {
       .order("ad_archive_id")
       .range(from, from + 999);
     if (pageId) q = q.eq("page_id", pageId);
+    else if (pageIds.length) q = q.in("page_id", pageIds);
     const { data, error } = await q;
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     ads.push(...((data ?? []) as AdRow[]));
@@ -57,6 +59,7 @@ export async function GET(req: NextRequest) {
 
   const { data: lastRun } = await supabaseAdmin
     .from("lab_runs").select("finished_at, status, ads_returned, cost_usd")
+    .not("finished_at", "is", null).eq("status", "succeeded")
     .order("id", { ascending: false }).limit(1).maybeSingle();
 
   const names = Object.fromEntries((competitors ?? []).map((c) => [c.page_id, c.name]));
