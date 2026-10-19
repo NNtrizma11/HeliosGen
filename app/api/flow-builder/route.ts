@@ -17,46 +17,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getKieToken } from "@/lib/getKieToken";
 import { FLOW_BUILDER_RULES, catalogText, extractJson, validatePlan, type FlowPlan } from "@/lib/flowBuilder";
+import { askClaude, type ClaudeMsg } from "@/lib/kieClaude";
 import { NODE_EDIT_RULES, validateEdit, type EditPlan, type EditTarget } from "@/lib/nodeEdit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 800;
 
-const MODEL = "claude-sonnet-4-6";
-const ENDPOINT = "https://api.kie.ai/claude/v1/messages";
-
-interface Msg { role: "user" | "assistant"; content: string }
-
-/** Read an Anthropic-style SSE stream (or a plain JSON reply) into text. */
-async function readReply(res: Response): Promise<string> {
-  const raw = await res.text();
-  const trimmed = raw.trim();
-  if (trimmed.startsWith("{")) {
-    try {
-      const j = JSON.parse(trimmed);
-      const blocks = (j.content ?? []) as Array<{ type: string; text?: string }>;
-      const text = blocks.filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
-      if (text) return text;
-      if (j.error) throw new Error(typeof j.error === "string" ? j.error : JSON.stringify(j.error));
-    } catch (e) {
-      if (e instanceof SyntaxError) { /* fall through to SSE parsing */ } else throw e;
-    }
-  }
-  let text = "";
-  for (const line of raw.split("\n")) {
-    if (!line.startsWith("data:")) continue;
-    const payload = line.slice(5).trim();
-    if (!payload || payload === "[DONE]") continue;
-    try {
-      const p = JSON.parse(payload);
-      if (p.type === "content_block_delta" && p.delta?.type === "text_delta") text += p.delta.text ?? "";
-      else if (p.type === "error") throw new Error(p.error?.message ?? "Model error");
-    } catch (e) {
-      if (!(e instanceof SyntaxError)) throw e;
-    }
-  }
-  return text;
-}
+type Msg = ClaudeMsg;
 
 /** Stream the response: headers now, a space every 10 s, then the JSON result. */
 function keepAlive(work: () => Promise<object>): Response {
@@ -111,18 +78,7 @@ export async function POST(req: NextRequest) {
     ];
 
     return keepAlive(async () => {
-    const upstream = await fetch(ENDPOINT, {
-      method: "POST",
-      cache: "no-store",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: MODEL, messages, stream: true, max_tokens: 32000 }),
-    });
-    if (!upstream.ok) {
-      const t = await upstream.text();
-      return { error: `Model request failed (${upstream.status}): ${t.slice(0, 300)}` };
-    }
-
-    const reply = await readReply(upstream);
+    const { text: reply } = await askClaude(apiKey, messages, 32000);
 
     if (editing) {
       let edit: EditPlan;
