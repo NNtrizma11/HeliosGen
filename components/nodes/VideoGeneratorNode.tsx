@@ -12,6 +12,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useReadOnly } from "@/lib/readOnlyContext";
 import { ShieldBan } from "lucide-react";
 import { VIDEO_MODELS as VIDEO_MODEL_CFG } from "@/lib/modelConfig";
+import { videoCaps, HANDLE_LABEL, missingInputsMessage } from "@/lib/videoCaps";
 import { useGeneratingBorderAnimation } from "@/lib/useGeneratingBorderAnimation";
 import MissingInputWarning from "./MissingInputWarning";
 import CostBubble from "./CostBubble";
@@ -832,7 +833,7 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
       setErrorHandles(new Set(missingRequiredHandles));
       setTimeout(() => setErrorHandles(new Set()), 1400);
       updateNodeData(id, { hasError: true });
-      addToast("Connect all required inputs for this model.", "error");
+      addToast(missingInputsMessage(cfg.name, missingRequiredHandles, (h) => edges.some((e) => e.target === id && e.targetHandle === h)), "error");
       return;
     }
 
@@ -886,7 +887,7 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
       }
       if (hasError) {
         updateNodeData(id, { hasError: true });
-        addToast("Connect all required inputs for this model.", "error");
+        addToast(missingInputsMessage(cfg.name, [...flashSet], (h) => edges.some((e) => e.target === id && e.targetHandle === h)), "error");
         return;
       }
     }
@@ -1835,7 +1836,32 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
                             <span className="shrink-0 text-white/50" style={{ lineHeight: 0 }}>
                               <NodeProviderIcon provider={m.provider} />
                             </span>
-                            <span className="flex-1 text-left whitespace-nowrap">{m.name}</span>
+                            <span className="flex-1 text-left">
+                              <span className="block whitespace-nowrap">{m.name}</span>
+                              <span className="flex flex-wrap gap-1 mt-0.5">
+                                {videoCaps(m).map((t) => (
+                                  <span key={t.label} title={t.title}
+                                    className={`px-1.5 rounded text-[9px] leading-[15px] ${t.strong ? "bg-teal-500/15 text-teal-200" : "bg-white/[0.06] text-white/45"}`}>
+                                    {t.label}
+                                  </span>
+                                ))}
+                              </span>
+                              {(() => {
+                                // Inputs already wired into this node that this model would drop
+                                if (m.id === videoModelId) return null;
+                                const wired: string[] = [...new Set<string>(edges.filter((e) => e.target === id && e.targetHandle).map((e) => e.targetHandle as string))];
+                                const keeps = new Set(m.handles as string[]);
+                                // videoRef <-> referenceVideo are remapped on switch, not dropped
+                                if (keeps.has("referenceVideo")) keeps.add("videoRef");
+                                if (keeps.has("videoRef")) keeps.add("referenceVideo");
+                                const dropped = wired.filter((h) => !keeps.has(h));
+                                return dropped.length ? (
+                                  <span className="block mt-0.5 text-[9px] text-amber-300/90">
+                                    drops: {dropped.map((h) => HANDLE_LABEL[h] ?? h).join(", ")}
+                                  </span>
+                                ) : null;
+                              })()}
+                            </span>
                           </button>
                         ))}
                       </Fragment>
