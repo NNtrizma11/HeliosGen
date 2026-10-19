@@ -32,7 +32,8 @@ export interface ClaudeStats {
   outputTokens: number | null;
 }
 
-type Progress = (p: { textChars: number; thinkingChars: number; seconds: number }) => void;
+/** Progress during a call; `partial` is the reply text so far (for live step logs). */
+type Progress = (p: { textChars: number; thinkingChars: number; seconds: number; partial: string }) => void;
 
 /** Read an Anthropic-style SSE stream (or a plain JSON reply) into text, measuring as it goes. */
 export async function readReply(res: Response, t0 = Date.now(), onProgress?: Progress): Promise<{ text: string; stats: Omit<ClaudeStats, "model" | "firstByte"> }> {
@@ -86,7 +87,7 @@ export async function readReply(res: Response, t0 = Date.now(), onProgress?: Pro
       while ((nl = buf.indexOf("\n")) >= 0) { handle(buf.slice(0, nl)); buf = buf.slice(nl + 1); }
       if (onProgress && Date.now() - lastReport > 3000) {
         lastReport = Date.now();
-        onProgress({ textChars: stats.textChars, thinkingChars: stats.thinkingChars, seconds: secs() });
+        onProgress({ textChars: stats.textChars, thinkingChars: stats.thinkingChars, seconds: secs(), partial: text });
       }
     }
     if (buf) handle(buf);

@@ -17,7 +17,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getKieToken } from "@/lib/getKieToken";
-import { FLOW_BUILDER_RULES, catalogText, extractJson, validatePlan, expandSeries, userBlocks, userBlocksText, type FlowPlan } from "@/lib/flowBuilder";
+import { FLOW_BUILDER_RULES, catalogText, extractJson, validatePlan, expandSeries, userBlocks, userBlocksText, describePartial, type FlowPlan } from "@/lib/flowBuilder";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { GUEST_MODE, resolveUserId } from "@/lib/guestMode";
 import { askClaude, type ClaudeMsg } from "@/lib/kieClaude";
@@ -145,8 +145,10 @@ export async function POST(req: NextRequest) {
 
     // Runs after the response; the Node server keeps it alive until it finishes.
     // Live progress (characters written so far) for the panel
-    const progress: Parameters<typeof askClaude>[3] = (p) => {
-      void supabaseAdmin.from("flow_builder_jobs").update({ progress: p }).eq("id", job.id).eq("status", "running");
+    const progress: Parameters<typeof askClaude>[3] = ({ partial, ...p }) => {
+      void supabaseAdmin.from("flow_builder_jobs")
+        .update({ progress: { ...p, steps: describePartial(partial).slice(-60) } })
+        .eq("id", job.id).eq("status", "running");
     };
     void safeRun(apiKey, body, progress).then(async (result) => {
       const failed = "error" in result;
