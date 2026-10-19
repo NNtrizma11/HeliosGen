@@ -17,6 +17,7 @@ export const GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v23.0";
 const GRAPH = `https://graph.facebook.com/${GRAPH_VERSION}`;
 const BACKFILL_DAYS = Number(process.env.META_BACKFILL_DAYS || 90);
 const REFRESH_DAYS = Number(process.env.META_REFRESH_DAYS || 4);
+const BREAKDOWN_REFRESH_DAYS = Number(process.env.META_BREAKDOWN_REFRESH_DAYS || 2);
 
 type Json = Record<string, unknown>;
 
@@ -264,7 +265,9 @@ export async function syncAccount(accountId: string, opts: { full?: boolean } = 
   try {
     const ads = await syncAds(accountId, token);
     const rows = await syncInsights(accountId, token, since, until);
-    const breakdownRows = await syncBreakdowns(accountId, token, since, until);
+    // Breakdowns change slowly: on frequent incremental runs only the last couple of days are refreshed
+    const bSince = full ? since : new Date(until.getTime() - (BREAKDOWN_REFRESH_DAYS - 1) * 864e5);
+    const breakdownRows = await syncBreakdowns(accountId, token, bSince, until);
     const now = new Date().toISOString();
     await supabaseAdmin.from("meta_ad_accounts").update({
       last_sync_at: now, last_sync_error: null, ...(full ? { backfilled_at: now } : {}),

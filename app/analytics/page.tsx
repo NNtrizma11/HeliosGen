@@ -233,7 +233,7 @@ function AccountSettings({ info, onChange, onClose }: { info: ConnectionInfo; on
           ))}
         </div>
         {msg && <div className="text-xs text-white/60">{msg}</div>}
-        <div className="text-[11px] text-white/40">Ticked accounts sync automatically every night: the last few days are refreshed, since Meta keeps attributing purchases for several days. The first sync loads 90 days and can take a few minutes.</div>
+        <div className="text-[11px] text-white/40">Ticked accounts sync automatically every 2 hours: the last few days are refreshed each time, since Meta keeps attributing purchases for several days. The first sync loads 90 days and can take a few minutes.</div>
         <div className="flex justify-between pt-1">
           <button onClick={disconnect} className="text-xs text-red-400/80 hover:text-red-300">Disconnect Meta</button>
           <button onClick={onClose} className={primary}>Done</button>
@@ -337,7 +337,7 @@ const LABELS: { key: string; label: string; hint: string }[] = [
 export default function AnalyticsPage() {
   const [info, setInfo] = useState<ConnectionInfo | null>(null);
   const [accountId, setAccountId] = useState("");
-  const [days, setDays] = useState(7);
+  const [days, setDays] = useState<number | "today">(7);
   const [data, setData] = useState<Analytics | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -369,7 +369,7 @@ export default function AnalyticsPage() {
 
   const syncNow = async () => {
     setSyncing(true); setError("");
-    try { await api("/api/meta/sync", { method: "POST", body: JSON.stringify({ account_id: accountId }) }); await loadInfo(); await load(); }
+    try { await api("/api/meta/sync", { method: "POST", body: JSON.stringify(accountId === "all" ? {} : { account_id: accountId }) }); await loadInfo(); await load(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setSyncing(false); }
   };
@@ -412,6 +412,12 @@ export default function AnalyticsPage() {
         <div className="flex items-center gap-3 flex-wrap">
           <h1 className="text-xl font-semibold">Analytics</h1>
           <div className="flex gap-1 flex-wrap">
+            {enabled.length > 1 && (
+              <button onClick={() => setAccountId("all")}
+                className={`px-3 py-1.5 rounded-lg text-xs ${accountId === "all" ? "bg-sky-500/15 text-sky-300" : "text-white/60 hover:text-white hover:bg-white/[0.05]"}`}>
+                All markets
+              </button>
+            )}
             {enabled.map((a) => (
               <button key={a.account_id} onClick={() => setAccountId(a.account_id)}
                 className={`px-3 py-1.5 rounded-lg text-xs ${accountId === a.account_id ? "bg-sky-500/15 text-sky-300" : "text-white/60 hover:text-white hover:bg-white/[0.05]"}`}>
@@ -420,8 +426,9 @@ export default function AnalyticsPage() {
             ))}
           </div>
           <div className="ml-auto flex gap-1 items-center flex-wrap">
-            {[7, 14, 30, 90].map((d) => (
-              <button key={d} onClick={() => setDays(d)} className={`px-2.5 py-1.5 rounded-lg text-xs ${days === d ? "bg-white/[0.1] text-white" : "text-white/50 hover:text-white"}`}>{d}d</button>
+            {(["today", 7, 14, 30, 90] as const).map((d) => (
+              <button key={d} onClick={() => setDays(d)} title={d === "today" ? "Today so far vs yesterday (partial day)" : `Last ${d} complete days`}
+                className={`px-2.5 py-1.5 rounded-lg text-xs ${days === d ? "bg-white/[0.1] text-white" : "text-white/50 hover:text-white"}`}>{d === "today" ? "Today" : `${d}d`}</button>
             ))}
             <button onClick={syncNow} disabled={syncing || !accountId} className={primary}>{syncing ? "Syncing…" : "↻ Sync"}</button>
             <button onClick={() => setSettings(true)} className={btn}>Accounts</button>
@@ -429,7 +436,7 @@ export default function AnalyticsPage() {
         </div>
         {data && (
           <div className="text-[11px] text-white/40 -mt-3">
-            {data.period.start} → {data.period.end} vs previous {data.period.days} days · last synced {data.account.last_sync_at ? new Date(data.account.last_sync_at).toLocaleString() : "never"} · purchases and revenue as reported by Meta (COD orders not yet adjusted for non-pickup)
+            {days === "today" ? `Today so far (${data.period.end}) vs yesterday` : `${data.period.start} → ${data.period.end} vs previous ${data.period.days} days`} · last synced {data.account.last_sync_at ? new Date(data.account.last_sync_at).toLocaleString() : "never"} · purchases and revenue as reported by Meta (COD orders not yet adjusted for non-pickup)
           </div>
         )}
         {error && <div className="text-sm text-red-400">{error}</div>}

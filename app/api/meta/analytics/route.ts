@@ -1,7 +1,8 @@
 /**
- * GET /api/meta/analytics?account_id=…&days=7
+ * GET /api/meta/analytics?account_id=…|all&days=7|today
  * KPIs (vs previous period), daily series, audience breakdowns and per-ad metrics with
- * Scaling / Opportunity / Fatiguing / Loser labels, for the period ending yesterday.
+ * Scaling / Opportunity / Fatiguing / Loser labels. Periods end yesterday (complete days);
+ * days=today shows today so far vs yesterday. account_id=all combines every synced account.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
@@ -50,11 +51,17 @@ async function fetchAll<T>(build: (from: number, to: number) => PromiseLike<{ da
 export async function GET(req: NextRequest) {
   if (!(await resolveUserId(req))) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const accountId = req.nextUrl.searchParams.get("account_id") ?? "";
-  const days = Math.min(90, Math.max(1, Number(req.nextUrl.searchParams.get("days")) || 7));
+  const todayMode = req.nextUrl.searchParams.get("days") === "today";
+  const days = todayMode ? 1 : Math.min(90, Math.max(1, Number(req.nextUrl.searchParams.get("days")) || 7));
   if (!accountId) return NextResponse.json({ error: "account_id required" }, { status: 400 });
 
+  // "all" = every account that syncs (they share one currency here; mixed currencies would need conversion)
+  const { data: enabledAccounts } = await supabaseAdmin.from("meta_ad_accounts").select("*").eq("sync_enabled", true);
+  const ids = accountId === "all" ? (enabledAccounts ?? []).map((a) => a.account_id as string) : [accountId];
+  if (!ids.length) return NextResponse.json({ error: "No accounts are syncing yet." }, { status: 400 });
+
   const iso = (d: Date) => d.toISOString().slice(0, 10);
-  const end = new Date(Date.now() - 864e5);                 // yesterday: today is still incomplete
+  const end = todayMode ? new Date() : new Date(Date.now() - 864e5); // complete days end yesterday
   const start = new Date(end.getTime() - (days - 1) * 864e5);
   const prevEnd = new Date(start.getTime() - 864e5);
   const prevStart = new Date(prevEnd.getTime() - (days - 1) * 864e5);
@@ -63,11 +70,17 @@ export async function GET(req: NextRequest) {
     const [rows, breakdownRows, { data: account }, { data: iterationRows }] = await Promise.all([
       fetchAll<Row>((f, t) => supabaseAdmin.from("meta_ad_insights_daily")
         .select("ad_id,date,spend,impressions,clicks,link_clicks,purchases,purchase_value,add_to_cart,checkouts,video_3s,thruplays,video_p25,video_p50,video_p75,video_p100")
-        .eq("account_id", accountId).gte("date", iso(prevStart)).lte("date", iso(end)).order("date").order("ad_id").range(f, t)),
+        .in("account_id", ids).gte("date", iso(prevStart)).lte("date", iso(end)).order("date").order("ad_id").range(f, t)),
       fetchAll<{ breakdown: string; key1: string; key2: string; spend: number; purchases: number; purchase_value: number; impressions: number }>((f, t) =>
         supabaseAdmin.from("meta_insights_breakdown").select("breakdown,key1,key2,spend,impressions,purchases,purchase_value")
-          .eq("account_id", accountId).gte("date", iso(start)).lte("date", iso(end)).order("date").order("breakdown").order("key1").order("key2").range(f, t)),
-      supabaseAdmin.from("meta_ad_accounts").select("*").eq("account_id", accountId).single(),
+          .in("account_id", ids).gte("date", iso(start)).lte("date", iso(end)).order("date").order("breakdown").order("key1").order("key2").range(f, t)),
+      accountId === "all"
+        ? Promise.resolve({ data: {
+            account_id: "all", name: "All markets", market: null,
+            currency: (enabledAccounts ?? [])[0]?.currency ?? "USD",
+            last_sync_at: (enabledAccounts ?? []).map((a) => a.last_sync_at as string | null).filter(Boolean).sort()[0] ?? null,
+          } })
+        : supabaseAdmin.from("meta_ad_accounts").select("*").eq("account_id", accountId).single(),
       supabaseAdmin.from("meta_ad_iterations").select("ad_id").limit(5000),
     ]);
 
@@ -91,7 +104,7 @@ export async function GET(req: NextRequest) {
     const adIds = [...byAd.keys()].filter((id) => byAd.get(id)!.cur.spend > 0);
     const meta = adIds.length
       ? await fetchAll<Record<string, string | null>>((f, t) => supabaseAdmin.from("meta_ads")
-          .select("ad_id,name,effective_status,campaign_name,adset_name,title,body,thumbnail_url,image_url,video_id,link_url,created_time")
+          .select("ad_id,account_id,name,effective_status,campaign_name,adset_name,title,body,thumbnail_url,image_url,video_id,link_url,created_time")
           .in("ad_id", adIds.slice(0, 1000)).range(f, t))
       : [];
     const metaById = new Map(meta.map((m) => [m.ad_id as string, m]));
