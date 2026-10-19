@@ -34,6 +34,8 @@ export function useSpaceSync() {
   const dirtyRef       = useRef(false);
   // Set by requestWorkflowSync(); makes the next debounce-arm use IMMEDIATE_MS.
   const immediateRef   = useRef(false);
+  // Last saved updatedAt per teammate canvas, so unchanged ones aren't re-sent.
+  const sharedSavedRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
     if (hydrated) return;
@@ -142,8 +144,31 @@ export function useSpaceSync() {
 
     setStatus("syncing");
     try {
-      // Only persist spaces that have at least one node
-      const spacesToSave = useWorkflowStore.getState().spaces.filter((sp) => sp.nodes.length > 0);
+      // Only persist spaces that have at least one node. Teammates' canvases are
+      // saved separately (below) so they keep their owner.
+      const allSpaces = useWorkflowStore.getState().spaces;
+      const spacesToSave = allSpaces.filter((sp) => sp.nodes.length > 0 && !sp.ownerId);
+
+      for (const sp of allSpaces.filter((x) => x.ownerId && x.nodes.length > 0)) {
+        const ts = sp.updatedAt ?? sp.createdAt;
+        if ((sharedSavedRef.current[sp.id] ?? sp.loadedAt) === ts) continue; // unchanged since loaded/saved
+        const payload = JSON.stringify({
+            name: sp.name,
+            data: {
+              nodes: sp.nodes.map((n) => ({ ...n, data: { ...n.data, inputImage: undefined } })),
+              edges: sp.edges, nodeCounters: sp.nodeCounters, viewport: sp.viewport,
+              createdAt: sp.createdAt, updatedAt: ts,
+            },
+        });
+        const res = await fetch(`/api/team/space/${encodeURIComponent(sp.id)}`, {
+          method: "PUT",
+          keepalive: keepalive && payload.length < 60_000, // browsers cap keepalive bodies at ~64KB
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: payload,
+        });
+        if (!res.ok) throw new Error(`shared save ${res.status}`);
+        sharedSavedRef.current[sp.id] = ts;
+      }
 
       if (spacesToSave.length > 0) {
         const rows = spacesToSave.map((sp) => ({
