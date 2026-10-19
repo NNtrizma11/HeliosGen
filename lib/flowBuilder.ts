@@ -47,6 +47,96 @@ export interface FlowPlan {
   blocks?: Record<string, string>;
   nodes: PlanNode[];
   edges: PlanEdge[];
+  /** Repeated structures, expanded in code by expandSeries (keeps the model's reply short). */
+  series?: PlanSeries[];
+}
+
+/** A node/edge pattern repeated `count` times. "{n}" = zero-padded number, "{i}" = plain number. */
+export interface PlanSeries {
+  from?: number;
+  count: number;
+  pad?: number;
+  rowStart?: number;
+  nodes: PlanNode[];
+  edges?: PlanEdge[];
+}
+
+const MAX_SERIES_NODES = 400;
+
+function substitute<T>(v: T, n: string, i: string): T {
+  if (typeof v === "string") return v.replace(/\{n\}/g, n).replace(/\{i\}/g, i) as T;
+  if (Array.isArray(v)) return v.map((x) => substitute(x, n, i)) as T;
+  if (v && typeof v === "object") {
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, substitute(x, n, i)])) as T;
+  }
+  return v;
+}
+
+/** Expand plan.series into plain nodes and edges (in place). Returns the same object. */
+export function expandSeries<T extends { nodes?: PlanNode[]; edges?: PlanEdge[]; series?: PlanSeries[] }>(plan: T): T {
+  plan.nodes ??= [];
+  plan.edges ??= [];
+  let made = 0;
+  for (const s of plan.series ?? []) {
+    const from = Number.isFinite(Number(s.from)) ? Number(s.from) : 1;
+    const count = Math.max(0, Math.floor(Number(s.count) || 0));
+    const pad = Math.max(1, Math.floor(Number(s.pad) || String(from + count - 1).length));
+    const templates = Array.isArray(s.nodes) ? s.nodes : [];
+    const rowsPer = templates.reduce((m, t) => Math.max(m, (t.row ?? 0) + 1), 1);
+    for (let k = 0; k < count && made < MAX_SERIES_NODES; k++) {
+      const num = from + k;
+      const n = String(num).padStart(pad, "0");
+      const i = String(num);
+      for (const t of templates) {
+        const node = substitute(t, n, i);
+        node.row = (s.rowStart ?? 0) + k * rowsPer + (t.row ?? 0);
+        plan.nodes.push(node);
+        made++;
+      }
+      for (const e of s.edges ?? []) plan.edges.push(substitute(e, n, i));
+    }
+  }
+  delete plan.series;
+  return plan;
+}
+
+// ── User lines ────────────────────────────────────────────────────────────────
+
+const LABEL_LINE = /^\s*(?:[-*•]\s*)?\**([A-Za-z]{1,8}[_-]?\d{1,3}[a-z]?)\**\s*[:—–.)\-](?:\s+(\S.*))?\s*$/;
+
+/**
+ * Labeled passages in the user's messages ("V24: She sips…", "S01 — …") become blocks
+ * named by their label, so the model references "@V24" instead of retyping the text.
+ * A passage is the rest of its line; only a label alone on its line ("S01:") takes the
+ * following lines, up to a blank line or the next label. Needs at least 2 labels.
+ */
+export function userBlocks(texts: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const text of texts) {
+    let cur: string | null = null;
+    for (const line of text.split(/\r?\n/)) {
+      const m = line.match(LABEL_LINE);
+      if (m) {
+        const name = m[1].replace(/-/g, "_");
+        out[name] = (m[2] ?? "").trimEnd();
+        cur = m[2] ? null : name;
+      } else if (!line.trim()) {
+        cur = null;
+      } else if (cur) {
+        out[cur] = out[cur] ? `${out[cur]}\n${line.trimEnd()}` : line.trimEnd();
+      }
+    }
+    for (const k of Object.keys(out)) if (!out[k].trim()) delete out[k];
+  }
+  return Object.keys(out).length >= 2 ? out : {};
+}
+
+/** Instructions telling the model which user lines are pre-stored as blocks. */
+export function userBlocksText(blocks: Record<string, string>): string {
+  const names = Object.keys(blocks);
+  if (!names.length) return "";
+  return `\n\nSTORED USER LINES — these labeled passages from the user's messages are ALREADY stored as blocks under exactly these names: ${names.join(", ")}.
+Reference them as "@NAME" (e.g. "@${names[0]}") wherever a prompt should contain that passage. Do NOT copy their text and do NOT redefine them in "blocks". Inside a series match the label's numbering: "{n}" for zero-padded labels like ${names.find((x) => /\D0\d/.test(x)) ?? "S01"}, "{i}" for plain ones like ${names.find((x) => /\D[1-9]\d*$/.test(x)) ?? "V1"}.`;
 }
 
 // ── Catalog (what the canvas supports) ───────────────────────────────────────
@@ -133,7 +223,20 @@ Settings:
 Layout:
 - "col" and "row" are grid positions starting at 0. Follow the user's layout instructions. Default: inputs in column 0, images in column 1, videos in column 2, one row per shot.
 
-Keys must be unique, short and use only letters, digits and underscores.`;
+Keys must be unique, short and use only letters, digits and underscores.
+
+Repeated structures — SPEED MATTERS, the user waits while you write:
+- Whenever 3 or more nodes follow the same pattern, describe the pattern ONCE in "series" instead of listing every node:
+  "series": [ { "from": 1, "count": 27, "pad": 2, "rowStart": 0,
+    "nodes": [ { "key": "img{n}", "type": "image_gen", "label": "IMG {n}", "col": 1, "settings": { ... }, "prompt": ["@BIBLE", "@S{n}"] },
+               { "key": "vid{n}", "type": "video_gen", "label": "VID {n}", "col": 2, "settings": { ... }, "prompt": ["@V{i}"] } ],
+    "edges": [ { "from": "product", "to": "img{n}", "input": "image" }, { "from": "img{n}", "to": "vid{n}", "input": "startFrame" } ] } ]
+- In a series template, "{n}" becomes the number zero-padded to "pad" digits (01, 02…) and "{i}" the plain number (1, 2…), in keys, labels, prompts and edges.
+- Each repetition gets its own row(s), starting at "rowStart"; a template's "row" is an offset inside one repetition.
+- Series nodes may connect to normal nodes (fixed keys) and normal "edges" may point at series keys (e.g. "img07").
+- Per-item text that is not a stored user line goes into "blocks" (e.g. "S01"…"S27") and the template references "@S{n}". Keep "message" and "notes" short.
+
+Costs: never calculate or estimate credit costs. The app adds exact costs after building; if the user asks for costs, say they are shown below.`;
 
 // ── Prompt assembly ───────────────────────────────────────────────────────────
 

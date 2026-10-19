@@ -10,7 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Node, Edge } from "@xyflow/react";
 import type { NodeData } from "./store";
-import { validatePlan, planToGraph, type PlanNode, type PlanNodeType, type PlanEdge, type ValidationResult } from "./flowBuilder";
+import { validatePlan, planToGraph, type PlanNode, type PlanNodeType, type PlanEdge, type PlanSeries, type ValidationResult } from "./flowBuilder";
 import { VOICE_MODELS } from "./voiceConfig";
 import { edgeStyle } from "./edgeStyles";
 
@@ -57,6 +57,8 @@ export interface EditAdd {
   blocks?: Record<string, string>;
   nodes: PlanNode[];
   edges: PlanEdge[];
+  /** Repeated nodes; expanded on the server before validation */
+  series?: PlanSeries[];
 }
 
 export interface EditPlan {
