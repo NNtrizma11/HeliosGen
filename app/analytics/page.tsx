@@ -165,13 +165,13 @@ function Connect({ info, onDone, embedded = false }: { info: ConnectionInfo | nu
       )}
       {info?.oauthAvailable && (
         <div className={`${box} p-5 space-y-3`}>
-          <div className="text-sm font-medium">Option 1 · Log in with Facebook</div>
-          <p className="text-xs text-white/50">Log in with the Facebook profile that has access to the ad accounts. Lasts about 60 days, then log in again (Helios warns you). Repeat with other profiles to add their accounts.</p>
+          <div className="text-sm font-medium">Option 1 · Continue with Facebook (recommended)</div>
+          <p className="text-xs text-white/50">A business admin logs in and picks the business and the ad accounts to share. Helios gets read-only access to exactly those accounts through a system user Meta creates in that business; no personal profile is attached to the ad accounts. Revoke anytime in Business settings → Integrations. Repeat for other businesses.</p>
           <button onClick={fbLogin} className={primary}>Continue with Facebook</button>
         </div>
       )}
       <div className={`${box} p-5 space-y-3`}>
-        <div className="text-sm font-medium">{info?.oauthAvailable ? "Option 2 · " : ""}System user token (recommended, never expires)</div>
+        <div className="text-sm font-medium">{info?.oauthAvailable ? "Option 2 · " : ""}Paste a system user token (never expires)</div>
         <ol className="text-xs text-white/60 space-y-1.5 list-decimal pl-4">
           <li>Open <a className="text-sky-300 hover:underline" href="https://business.facebook.com/settings/system-users" target="_blank" rel="noreferrer">Business settings → Users → System users</a> and add a system user (role: Admin).</li>
           <li>Click <b>Assign assets</b> → Ad accounts → select every account to sync → permission <b>View performance</b>.</li>
@@ -221,7 +221,9 @@ function AccountSettings({ info, onChange, onClose }: { info: ConnectionInfo; on
             return (
               <div key={c.id} className={`${box} px-4 py-2.5 flex items-center gap-3 flex-wrap`}>
                 <span className="text-sm">{c.meta_user_name ?? "Meta user"}</span>
-                <span className="text-[11px] text-white/40">{c.token_type === "system_user" ? "system user token · never expires" : days != null ? `Facebook login · expires in ${days} days` : "Facebook login"}</span>
+                <span className="text-[11px] text-white/40">{c.token_type === "system_user" ? "system user token · never expires"
+                  : c.token_type === "business_integration" ? (days != null ? `business integration · expires in ${days} days` : "business integration · never expires")
+                  : days != null ? `Facebook login · expires in ${days} days` : "Facebook login"}</span>
                 <span className="text-[11px] text-white/40">{info.accounts.filter((a) => a.connection_id === c.id).length} ad accounts</span>
                 {warn && <span className="text-[11px] text-amber-300">{c.last_error ?? "Expires soon: log in again"}</span>}
                 <button onClick={() => remove(c.id)} className="ml-auto text-[11px] text-red-400/80 hover:text-red-300">Remove</button>
