@@ -8,6 +8,7 @@ import { IMAGE_MODELS, VIDEO_MODELS } from "@/lib/modelConfig";
 import { VOICES } from "@/lib/voiceConfig";
 import { EDITABLE_NODE_TYPES, snapshotTargets, editToStoreOps, addToGraph, type EditPlan, type EditTarget, type TargetRef } from "@/lib/nodeEdit";
 import { useCostStore, nodeEstimate } from "@/lib/nodeCost";
+import { useAssetStore, assetCatalog } from "@/lib/assets";
 import { creditsToUsd, formatUsd } from "@/lib/pricing";
 import type { Node } from "@xyflow/react";
 import type { NodeData } from "@/lib/store";
@@ -115,6 +116,16 @@ async function runJob(body: object, token: string, onStart: (jobId: string) => v
   if (typeof json.jobId !== "string") return json; // guest mode or an immediate error
   onStart(json.jobId);
   return pollJob(json.jobId, token, onProgress);
+}
+
+/** The user's asset library as text for the builder (empty if none / unavailable). */
+async function libraryText(): Promise<string> {
+  try {
+    await useAssetStore.getState().load();
+    return assetCatalog(useAssetStore.getState().assets);
+  } catch {
+    return "";
+  }
 }
 
 /** "Estimated cost if you run everything: …" for newly created nodes. */
@@ -403,7 +414,7 @@ export default function FlowBuilderPanel() {
         const { targets, refs } = snapshotTargets(attachedNodes.map((n) => n.id), state.nodes, state.edges);
         setChat((c) => [...c, { role: "user", edit: true, content: `[Editing ${targets.map((t) => t.label).join(", ")}] ${text}` }]);
         const json = await runJob(
-          { mode: "edit", targets, rules, messages: [{ role: "user", content: text }] },
+          { mode: "edit", targets, rules, assets: await libraryText(), messages: [{ role: "user", content: text }] },
           token,
           (jobId) => savePending({ jobId, spaceId, kind: "edit", startedAt: t0, refs, targets }),
           setProgress,
@@ -414,7 +425,7 @@ export default function FlowBuilderPanel() {
         const next: ChatEntry[] = [...chat, { role: "user", content: text }];
         setChat(next);
         const json = await runJob(
-          { messages: next.filter((m) => !m.content.startsWith("[Editing ") && !m.edit).map(({ role, content }) => ({ role, content })), rules },
+          { messages: next.filter((m) => !m.content.startsWith("[Editing ") && !m.edit).map(({ role, content }) => ({ role, content })), rules, assets: await libraryText() },
           token,
           (jobId) => savePending({ jobId, spaceId, kind: "build", startedAt: t0 }),
           setProgress,

@@ -844,7 +844,7 @@ export function AppSidebar() {
     { label: "Image", href: `/gallery?tab=images${folderParam}`, icon: ImageIcon, active: pathname === "/gallery" && tab === "images" },
     { label: "Video", href: `/gallery?tab=videos${folderParam}`, icon: VideoIcon, active: pathname === "/gallery" && tab === "videos" },
     { label: "Workflow", href: "/workflow", icon: Workflow, active: pathname === "/workflow" || (pathname.startsWith("/workflow/") && pathname !== "/workflow") },
-    { label: "Assets", href: "#", icon: Package, active: false, disabled: true },
+    { label: "Assets", href: "/assets", icon: Package, active: pathname === "/assets" },
     { label: "Chat", href: "/chat", icon: MessageSquare, active: pathname === "/chat" },
     { label: "Analytics", href: "/analytics", icon: TrendingUp, active: pathname === "/analytics" },
     { label: "Lab", href: "/lab", icon: Radar, active: pathname === "/lab" },
@@ -894,7 +894,7 @@ export function AppSidebar() {
                 </span>
               </>
             );
-            if (item.disabled) return (
+            if ("disabled" in item && item.disabled) return (
               <div key={item.label} className={itemCls(item.active, true)} title={item.label}>{content}</div>
             );
             if (!item.href || item.href === "#") return (
