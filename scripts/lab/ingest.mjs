@@ -1,16 +1,19 @@
 #!/usr/bin/env node
 /**
- * Creative Lab — competitor ad ingest (runs weekly on Railway, Mondays 05:00 UTC).
+ * Creative Lab — competitor ad ingest (runs daily on Railway, 05:00 UTC).
  *
- * - Brands due for a scan (tier interval in lab_competitors.scan_every_days) are scanned via the
- *   Apify actor curious_coder/facebook-ads-library-scraper, with ad details (EU reach, audience).
- * - First scan of a brand pulls its full history (active + inactive). Later scans pull active ads
- *   only; ads that vanished from the active list are marked ended (completeness-guarded).
+ * Scans run through the Apify actor curious_coder/facebook-ads-library-scraper, with ad details
+ * (EU reach, audience):
+ * - First scan of a brand pulls its full history (active + inactive).
+ * - Every day: only ads that started since the last scan (cheap; catches new ads within a day).
+ * - Every scan_every_days (default 7): all active ads; ads that vanished from the active list are
+ *   marked ended (completeness-guarded) and long runners get fresh reach numbers.
  * - Ads go to lab_ads (latest state) and lab_ad_snapshots (one row per ad per scan day).
  * - Media goes to R2: every image, every video (kept 30 days, permanently for winner-signal ads).
  *
  * Env: APIFY_TOKEN, NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, R2_* (optional)
- * Optional: LAB_MAX_ADS / LAB_MAX_COST_USD (incremental caps), LAB_BACKFILL_MAX_ADS /
+ * Optional: LAB_MAX_ADS / LAB_MAX_COST_USD (weekly active-check caps), LAB_NEW_MAX_ADS /
+ *           LAB_NEW_MAX_COST_USD (daily new-ads caps), LAB_BACKFILL_MAX_ADS /
  *           LAB_BACKFILL_MAX_COST_USD (backfill caps), LAB_VIDEO_BUFFER_DAYS, LAB_FORCE=1 (scan all now)
  *
  * Run: node scripts/lab/ingest.mjs
@@ -243,25 +246,34 @@ async function pruneVideos() {
 }
 
 /* ── Scanning ─────────────────────────────────────────────────────────────────
- * First scan of a brand (backfill): all ads, active and inactive.
- * Later scans (incremental): active ads only (~5x cheaper). An ad that was active
- * before and is missing now is marked ended, with its last-seen day as end date.
+ * Runs daily. Per brand:
+ * - backfill (first scan): all ads, active and inactive.
+ * - new (every day): only ads that STARTED since the last scan (Ad Library start-date
+ *   filter, 1 day overlap) — a few ads instead of every running one, so it is cheap.
+ * - incremental (every scan_every_days, default 7): all active ads, to detect which old
+ *   ads stopped (end date = last day seen) and refresh reach for long runners.
  */
-async function runActor(competitors, activeStatus, maxAds, maxCost) {
+const iso = (d) => new Date(d).toISOString().slice(0, 10);
+
+/** Ad Library URL for one brand; `since` (YYYY-MM-DD) limits to ads started on/after it. */
+function libraryUrl(pageId, activeStatus, since) {
+  const base = `https://www.facebook.com/ads/library/?active_status=${activeStatus}&ad_type=all&country=ALL&view_all_page_id=${pageId}`;
+  return since ? `${base}&start_date%5Bmin%5D=${since}&start_date%5Bmax%5D=` : base;
+}
+
+async function runActor(competitors, activeStatus, maxAds, maxCost, sinceFor = () => null, maxMemory = 4096) {
   const input = {
     count: maxAds,
     scrapeAdDetails: true,
     "scrapePageAds.activeStatus": activeStatus,
     "scrapePageAds.countryCode": "ALL",
     "scrapePageAds.sortBy": "impressions_desc",
-    urls: competitors.map((c) => ({
-      url: `https://www.facebook.com/ads/library/?active_status=${activeStatus}&ad_type=all&country=ALL&view_all_page_id=${c.page_id}`,
-    })),
+    urls: competitors.map((c) => ({ url: libraryUrl(c.page_id, activeStatus, sinceFor(c)) })),
   };
   // The actor requires at least one input URL per 512 MB of memory, and Apify memory must be a
   // power of two: use the largest power of two <= 512 MB x URLs, capped at 4 GB.
   let memory = 512;
-  while (memory * 2 <= Math.min(4096, 512 * competitors.length)) memory *= 2;
+  while (memory * 2 <= Math.min(maxMemory, 512 * competitors.length)) memory *= 2;
   // LAB_REUSE_APIFY_RUN=<runId> re-processes a finished run instead of scraping again (no new Apify cost)
   const reuse = process.env.LAB_REUSE_APIFY_RUN;
   const runId = reuse || (await apify(`/acts/${ACTOR}/runs?maxTotalChargeUsd=${maxCost}&memory=${memory}`, { method: "POST", body: JSON.stringify(input) })).data.id;
@@ -336,13 +348,23 @@ async function detectEnded(competitors, returned, runRowId) {
 async function scanGroup(competitors, mode) {
   if (!competitors.length) return;
   const backfill = mode === "backfill";
-  const maxAds = Number(backfill ? process.env.LAB_BACKFILL_MAX_ADS || 30000 : process.env.LAB_MAX_ADS || 20000);
-  const maxCost = Number(backfill ? process.env.LAB_BACKFILL_MAX_COST_USD || 25 : process.env.LAB_MAX_COST_USD || 10);
+  const daily = mode === "new";
+  const maxAds = Number(backfill ? process.env.LAB_BACKFILL_MAX_ADS || 30000 : daily ? process.env.LAB_NEW_MAX_ADS || 3000 : process.env.LAB_MAX_ADS || 20000);
+  const maxCost = Number(backfill ? process.env.LAB_BACKFILL_MAX_COST_USD || 25 : daily ? process.env.LAB_NEW_MAX_COST_USD || 3 : process.env.LAB_MAX_COST_USD || 10);
+  // New-ads scans start from the last scan day (1 day overlap so nothing falls between runs)
+  const sinceFor = (c) => {
+    if (!daily) return null;
+    const last = c.last_new_scan_at || c.last_scan_at || c.backfilled_at;
+    return last ? iso(Date.parse(last) - 864e5) : null;
+  };
 
   const { data: runRow, error } = await db.from("lab_runs").insert({ source: "apify:curious_coder", mode }).select().single();
   if (error) throw error;
 
-  const { runId, run, items } = await runActor(competitors, backfill ? "all" : "active", maxAds, maxCost);
+  const { runId, run, items } = await runActor(
+    competitors, backfill || daily ? "all" : "active", maxAds, maxCost, sinceFor,
+    daily ? 1024 : 4096, // small daily runs don't need much memory
+  );
   await db.from("lab_runs").update({ apify_run_id: runId }).eq("id", runRow.id);
 
   const tracked = new Set(competitors.map((c) => c.page_id));
@@ -353,26 +375,32 @@ async function scanGroup(competitors, mode) {
   // it must not mark brands as backfilled or ads as ended.
   if (run.status === "SUCCEEDED" && items.length === 0) console.warn(`Apify run ${runId} returned no items: ${run.statusMessage ?? ""}`);
   const succeeded = run.status === "SUCCEEDED" && items.length > 0;
-  const endInfo = !backfill && succeeded ? await detectEnded(competitors, kept, runRow.id) : { ended: 0, notes: [] };
+  // A new-ads scan only sees recent starts, so it can never say an older ad has ended.
+  // An empty new-ads scan is normal (no new ads that day).
+  const scanOk = run.status === "SUCCEEDED" && (items.length > 0 || daily);
+  const endInfo = mode === "incremental" && succeeded ? await detectEnded(competitors, kept, runRow.id) : { ended: 0, notes: [] };
 
   await markKeepers([...tracked]);
   const archived = await archiveMedia(kept);
 
   const now = new Date().toISOString();
-  if (succeeded) {
+  if (scanOk) {
     for (const c of competitors) {
-      await db.from("lab_competitors").update({ last_scan_at: now, ...(backfill ? { backfilled_at: now } : {}) }).eq("page_id", c.page_id);
+      await db.from("lab_competitors").update(
+        daily ? { last_new_scan_at: now } : { last_scan_at: now, last_new_scan_at: now, ...(backfill ? { backfilled_at: now } : {}) },
+      ).eq("page_id", c.page_id);
     }
   }
   await db.from("lab_runs").update({
     finished_at: now,
-    status: succeeded ? "succeeded" : items.length === 0 && run.status === "SUCCEEDED" ? "empty" : run.status.toLowerCase(),
+    status: succeeded || scanOk ? "succeeded" : items.length === 0 && run.status === "SUCCEEDED" ? "empty" : run.status.toLowerCase(),
     ads_returned: kept.length,
     claimed_total: items.reduce((m, a) => Math.max(m, a.total || 0), 0) || null,
     cost_usd: run.usageTotalUsd ?? null,
     notes: [
       `${mode}: ${kept.length} ads for ${competitors.length} brands (${competitors.map((c) => c.name).join(", ")})`,
-      backfill ? null : `${endInfo.ended} ads detected as ended`,
+      mode === "incremental" ? `${endInfo.ended} ads detected as ended` : null,
+      daily ? `new ads since ${competitors.map((c) => `${c.name} ${sinceFor(c)}`).join(", ")}` : null,
       `media archived: ${archived.files} files, ${(archived.bytes / 1e6).toFixed(1)} MB`,
       ...endInfo.notes,
       !succeeded && run.statusMessage ? `actor: ${run.statusMessage}` : null,
@@ -383,16 +411,22 @@ async function scanGroup(competitors, mode) {
 
 async function main() {
   const { data: competitors, error } = await db.from("lab_competitors")
-    .select("page_id, name, tier, scan_every_days, backfilled_at, last_scan_at").eq("active", true);
+    .select("page_id, name, tier, scan_every_days, backfilled_at, last_scan_at, last_new_scan_at").eq("active", true);
   if (error) throw error;
 
-  // Due when never scanned, or the tier's interval has passed (1 day slack for cron timing)
-  const due = competitors.filter((c) => !c.last_scan_at ||
-    Date.now() - Date.parse(c.last_scan_at) >= (c.scan_every_days - 1) * 864e5 || process.env.LAB_FORCE === "1");
-  console.log(`Competitors: ${competitors.length}, due now: ${due.map((c) => c.name).join(", ") || "none"}`);
+  // Weekly-style active check is due when the tier's interval has passed (1 day slack for cron timing)
+  const activeDue = (c) => !c.last_scan_at ||
+    Date.now() - Date.parse(c.last_scan_at) >= ((c.scan_every_days || 7) - 1) * 864e5 || process.env.LAB_FORCE === "1";
+  const backfills = competitors.filter((c) => !c.backfilled_at);
+  const checks = competitors.filter((c) => c.backfilled_at && activeDue(c));
+  // Everyone else gets the cheap daily new-ads scan (skipped if it already ran in the last 20 h)
+  const fresh = competitors.filter((c) => c.backfilled_at && !activeDue(c) &&
+    (!c.last_new_scan_at || Date.now() - Date.parse(c.last_new_scan_at) >= 20 * 3600e3));
+  console.log(`Competitors: ${competitors.length} · backfill: ${backfills.map((c) => c.name).join(", ") || "-"} · active check: ${checks.map((c) => c.name).join(", ") || "-"} · new ads: ${fresh.map((c) => c.name).join(", ") || "-"}`);
 
-  await scanGroup(due.filter((c) => !c.backfilled_at), "backfill");
-  await scanGroup(due.filter((c) => c.backfilled_at), "incremental");
+  await scanGroup(backfills, "backfill");
+  await scanGroup(checks, "incremental");
+  await scanGroup(fresh, "new");
   await pruneVideos();
 }
 
