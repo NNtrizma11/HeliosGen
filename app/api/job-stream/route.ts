@@ -47,6 +47,9 @@ async function recoverJob(taskId: string): Promise<JobResult | null> {
   if (gen?.status === "error") {
     return { status: "error", error: gen.error_msg ?? "Generation failed" };
   }
+  // Still running on the provider: the job store was lost (e.g. a deploy restarted
+  // the server), but the generation row exists, so keep waiting for its callback.
+  if (gen) return { status: "pending" };
   return null;
 }
 
@@ -62,17 +65,19 @@ export async function GET(req: NextRequest) {
 
   if (!existing) {
     const recovered = await recoverJob(taskId);
-    if (recovered) {
-      jobStore.set(taskId, recovered);
-      return immediate(recovered);
+    if (!recovered) {
+      // Not in Supabase either — truly not found
+      return immediate({ status: "error", error: "Job not found" });
     }
-    // Not in Supabase either — truly not found
-    return immediate({ status: "error", error: "Job not found" });
+    jobStore.set(taskId, recovered);
+    if (recovered.status !== "pending") return immediate(recovered);
+    // pending: fall through and stream, like a job this server started
   }
 
   // Desktop/guest: restart the kie.ai poller if a server restart lost it.
   if (GUEST_MODE && !taskId.startsWith("azure-")) {
-    resumeKieJob(taskId, existing.type === "video" ? "video" : "image");
+    const pending = jobStore.get(taskId) as { type?: string } | undefined;
+    resumeKieJob(taskId, pending?.type === "video" ? "video" : "image");
   }
 
   // Job is pending — open an SSE stream and wait for the poller/callback to fire
@@ -85,6 +90,7 @@ export async function GET(req: NextRequest) {
         if (closed) return;
         closed = true;
         clearInterval(heartbeat);
+        clearInterval(dbCheck);
         clearTimeout(timeout);
         controller.close();
       };
@@ -99,6 +105,14 @@ export async function GET(req: NextRequest) {
       const heartbeat = setInterval(() => {
         if (!closed) controller.enqueue(enc.encode(": ping\n\n"));
       }, 25_000);
+
+      // Safety net: the provider callback may have landed while this server was
+      // restarting (it then only reached the DB), so re-check the DB every 15 s.
+      const dbCheck = setInterval(async () => {
+        if (closed || GUEST_MODE) return;
+        const r = await recoverJob(taskId).catch(() => null);
+        if (r && r.status !== "pending") { jobStore.set(taskId, r); send(r); }
+      }, 15_000);
 
       // Hard cap — emit error if callback never arrives
       const timeout = setTimeout(() => {
