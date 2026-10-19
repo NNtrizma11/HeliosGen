@@ -86,7 +86,7 @@ function savePending(p: PendingJob | null) {
 }
 
 /** Poll a server build job until it finishes. */
-type JobProgress = { textChars: number; thinkingChars: number; seconds: number };
+type JobProgress = { textChars: number; thinkingChars: number; seconds: number; steps?: string[] };
 
 async function pollJob(jobId: string, token: string, onProgress?: (p: JobProgress) => void): Promise<Record<string, unknown>> {
   for (let i = 0; ; i++) {
@@ -489,6 +489,13 @@ export default function FlowBuilderPanel() {
                   ? ` · thinking (${progress.thinkingChars.toLocaleString("en-US")} characters)`
                   : " · waiting for the AI to start")}
               <span className="block text-[10px] text-gray-500 mt-0.5">It keeps running on the server — you can refresh or leave and it will appear when done.</span>
+            </div>
+          )}
+          {busy && progress?.steps && progress.steps.length > 0 && (
+            <div className="mr-4 rounded-xl bg-white/5 px-3 py-2 text-[11px] text-gray-300 space-y-0.5">
+              {progress.steps.slice(-14).map((st, i, arr) => (
+                <div key={i} className={`break-words ${i === arr.length - 1 ? "text-amber-200" : ""}`}>{st}</div>
+              ))}
             </div>
           )}
         </div>

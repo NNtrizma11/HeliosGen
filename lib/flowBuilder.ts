@@ -174,7 +174,7 @@ NOT AVAILABLE ON THIS CANVAS: "Enhance Prompt" (prompts are always sent unchange
 
 export const FLOW_BUILDER_RULES = `You build node workflows on a visual canvas for AI image, video and voice generation. You never run anything; you only describe nodes and connections as JSON.
 
-Reply with ONE JSON object and nothing else (no markdown fences), shaped like:
+Reply with ONE JSON object and nothing else (no markdown fences). Write its keys in this order — message, problems, notes, blocks, nodes, series, edges — so the user sees your plan first. Shaped like:
 {
   "message": "one or two sentences for the user about what you built",
   "problems": [],
@@ -546,4 +546,38 @@ export function extractJson(raw: string): unknown {
   const end = text.lastIndexOf("}");
   if (start < 0 || end <= start) throw new Error("The reply contained no JSON.");
   return JSON.parse(text.slice(start, end + 1));
+}
+
+/**
+ * Human-readable steps from a reply that is still being written, e.g.
+ * ["Plan: 54-node workflow…", "Writing shared texts", "＋ PRODUCT", "＋ IMG {n} ×27 (series)", "Connecting: 12 connections"].
+ * Regex-based on purpose: the JSON is incomplete while streaming.
+ */
+export function describePartial(text: string): string[] {
+  const steps: string[] = [];
+  const str = (key: string) => {
+    const m = text.match(new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`));
+    if (!m) return null;
+    try { return JSON.parse(`"${m[1]}"`) as string; } catch { return m[1]; }
+  };
+  const msg = str("message");
+  if (msg) steps.push(`Plan: ${msg.length > 220 ? msg.slice(0, 220) + "…" : msg}`);
+  const blocksAt = text.indexOf('"blocks"');
+  const nodesAt = text.search(/"(nodes|series)"\s*:/);
+  if (blocksAt >= 0) {
+    const blockPart = text.slice(blocksAt, nodesAt > blocksAt ? nodesAt : undefined);
+    const names = [...blockPart.matchAll(/"([A-Za-z0-9_]+)"\s*:\s*"/g)].map((m) => m[1]).filter((n) => n !== "blocks");
+    if (names.length) steps.push(`Writing shared texts: ${names.length > 8 ? `${names.slice(0, 8).join(", ")} +${names.length - 8}` : names.join(", ")}`);
+  }
+  // Series: each "count" before its node labels
+  const seriesRe = /"count"\s*:\s*(\d+)/g;
+  const counts = [...text.matchAll(seriesRe)].map((m) => ({ at: m.index ?? 0, n: Number(m[1]) }));
+  for (const m of text.matchAll(/"label"\s*:\s*"((?:[^"\\]|\\.)*)"/g)) {
+    const label = m[1];
+    const series = /\{[ni]\}/.test(label) ? [...counts].reverse().find((c) => c.at < (m.index ?? 0)) : undefined;
+    steps.push(series ? `＋ ${label} ×${series.n} (repeated)` : `＋ ${label}`);
+  }
+  const edges = (text.match(/"input"\s*:/g) ?? []).length;
+  if (edges) steps.push(`Connecting: ${edges} connection${edges === 1 ? "" : "s"}${counts.length ? " (per repetition where repeated)" : ""}`);
+  return steps;
 }
