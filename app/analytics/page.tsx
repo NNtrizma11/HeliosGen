@@ -6,11 +6,13 @@ import { createClient } from "@/lib/supabase/client";
 interface Account {
   account_id: string; name: string; currency: string | null; market: string | null; business_name: string | null;
   sync_enabled: boolean; backfilled_at: string | null; last_sync_at: string | null; last_sync_error: string | null;
+  connection_id: number | null; account_status: number | null;
 }
-interface ConnectionInfo {
-  connected: boolean; oauthAvailable: boolean; accounts: Account[];
-  connection: { token_type: string; meta_user_name: string | null; expires_at: string | null; created_at: string } | null;
+interface Connection {
+  id: number; token_type: string; meta_user_id: string | null; meta_user_name: string | null;
+  expires_at: string | null; last_error: string | null; created_at: string;
 }
+interface ConnectionInfo { connected: boolean; oauthAvailable: boolean; accounts: Account[]; connections: Connection[] }
 type Metrics = {
   spend: number; impressions: number; purchases: number; purchase_value: number; link_clicks: number; video_3s: number; thruplays: number;
   roas: number | null; cpa: number | null; cpm: number | null; ctr: number | null; cvr: number | null; aov: number | null;
@@ -139,7 +141,7 @@ function AgeGender({ items, value, format }: { items: BreakdownItem[]; value: (b
 }
 
 /* ── Connect flow ──────────────────────────────────────────────────────────── */
-function Connect({ info, onDone }: { info: ConnectionInfo | null; onDone: () => void }) {
+function Connect({ info, onDone, embedded = false }: { info: ConnectionInfo | null; onDone: () => void; embedded?: boolean }) {
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -154,15 +156,17 @@ function Connect({ info, onDone }: { info: ConnectionInfo | null; onDone: () => 
     window.location.href = `/api/meta/oauth/start?t=${encodeURIComponent(data.session?.access_token ?? "")}`;
   };
   return (
-    <div className="max-w-2xl mx-auto px-4 py-10 space-y-5">
-      <div>
-        <h1 className="text-xl font-semibold">Connect Meta ads</h1>
-        <p className="text-sm text-white/50 mt-1">Read-only access to your ad accounts, so Analytics can sync spend, purchases, ROAS and creative performance every day.</p>
-      </div>
+    <div className={embedded ? "space-y-3" : "max-w-2xl mx-auto px-4 py-10 space-y-5"}>
+      {!embedded && (
+        <div>
+          <h1 className="text-xl font-semibold">Connect Meta ads</h1>
+          <p className="text-sm text-white/50 mt-1">Read-only access to your ad accounts, so Analytics can sync spend, purchases, ROAS and creative performance. You can connect several Facebook profiles or businesses (e.g. backup ad accounts); each adds its ad accounts.</p>
+        </div>
+      )}
       {info?.oauthAvailable && (
         <div className={`${box} p-5 space-y-3`}>
           <div className="text-sm font-medium">Option 1 · Log in with Facebook</div>
-          <p className="text-xs text-white/50">Quickest. The connection lasts 60 days, then you log in again.</p>
+          <p className="text-xs text-white/50">Log in with the Facebook profile that has access to the ad accounts. Lasts about 60 days, then log in again (Helios warns you). Repeat with other profiles to add their accounts.</p>
           <button onClick={fbLogin} className={primary}>Continue with Facebook</button>
         </div>
       )}
@@ -197,20 +201,37 @@ function AccountSettings({ info, onChange, onClose }: { info: ConnectionInfo; on
     } catch (e) { setMsg(`${a.name}: ${e instanceof Error ? e.message : String(e)}`); }
     finally { setBusy(null); onChange(); }
   };
-  const disconnect = async () => { await api("/api/meta/connection", { method: "DELETE" }); onChange(); onClose(); };
+  const [adding, setAdding] = useState(false);
+  const remove = async (id: number) => {
+    if (!window.confirm("Remove this connection? Its ad accounts stop syncing unless another connection can see them. Synced data stays.")) return;
+    await api(`/api/meta/connection?id=${id}`, { method: "DELETE" }); onChange();
+  };
   return (
     <div className="fixed inset-0 z-50 bg-black/60 grid place-items-center p-4" onClick={onClose}>
       <div className="w-full max-w-2xl rounded-xl border border-white/[0.1] bg-[#121212] p-5 space-y-4 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center">
-          <div>
-            <div className="text-base font-semibold">Meta ad accounts</div>
-            <div className="text-xs text-white/50">
-              Connected {info.connection?.meta_user_name ? `as ${info.connection.meta_user_name}` : ""} · {info.connection?.token_type === "system_user" ? "system user token" : "Facebook login"}
-              {info.connection?.expires_at ? ` · expires ${new Date(info.connection.expires_at).toLocaleDateString()}` : ""}
-            </div>
-          </div>
+          <div className="text-base font-semibold">Meta connections &amp; ad accounts</div>
           <button onClick={onClose} className="ml-auto text-white/50 hover:text-white text-sm">✕</button>
         </div>
+        <div className="space-y-2">
+          <div className="text-xs uppercase tracking-wide text-white/40">Connections</div>
+          {info.connections.map((c) => {
+            const days = c.expires_at ? Math.round((Date.parse(c.expires_at) - Date.now()) / 864e5) : null;
+            const warn = c.last_error || (days != null && days < 10);
+            return (
+              <div key={c.id} className={`${box} px-4 py-2.5 flex items-center gap-3 flex-wrap`}>
+                <span className="text-sm">{c.meta_user_name ?? "Meta user"}</span>
+                <span className="text-[11px] text-white/40">{c.token_type === "system_user" ? "system user token · never expires" : days != null ? `Facebook login · expires in ${days} days` : "Facebook login"}</span>
+                <span className="text-[11px] text-white/40">{info.accounts.filter((a) => a.connection_id === c.id).length} ad accounts</span>
+                {warn && <span className="text-[11px] text-amber-300">{c.last_error ?? "Expires soon: log in again"}</span>}
+                <button onClick={() => remove(c.id)} className="ml-auto text-[11px] text-red-400/80 hover:text-red-300">Remove</button>
+              </div>
+            );
+          })}
+          {adding ? <div className={`${box} p-4`}><Connect info={info} onDone={() => { setAdding(false); onChange(); }} embedded /></div>
+            : <button onClick={() => setAdding(true)} className={btn}>+ Add another login</button>}
+        </div>
+        <div className="text-xs uppercase tracking-wide text-white/40 pt-2">Ad accounts · tick the ones to sync</div>
         <div className="space-y-2">
           {info.accounts.map((a) => (
             <div key={a.account_id} className={`${box} px-4 py-3 flex items-center gap-3 flex-wrap`}>
@@ -218,6 +239,8 @@ function AccountSettings({ info, onChange, onClose }: { info: ConnectionInfo; on
                 <input type="checkbox" checked={a.sync_enabled} onChange={(e) => patch(a.account_id, { sync_enabled: e.target.checked })} />
                 <span className="text-sm font-medium">{a.name}</span>
               </label>
+              <span className="text-[11px] text-white/40">{a.business_name ?? "no business"} · {a.account_id}</span>
+              {a.account_status != null && a.account_status !== 1 && <span className="text-[11px] text-red-300">{a.account_status === 2 ? "disabled" : a.account_status === 3 ? "unsettled" : "not active"}</span>}
               <input defaultValue={a.market ?? ""} onBlur={(e) => e.target.value !== (a.market ?? "") && patch(a.account_id, { market: e.target.value })}
                 placeholder="Market" className="w-16 bg-white/[0.04] border border-white/[0.1] rounded px-2 py-1 text-xs" />
               <span className="text-[11px] text-white/40">
@@ -234,8 +257,7 @@ function AccountSettings({ info, onChange, onClose }: { info: ConnectionInfo; on
         </div>
         {msg && <div className="text-xs text-white/60">{msg}</div>}
         <div className="text-[11px] text-white/40">Ticked accounts sync automatically every 2 hours: the last few days are refreshed each time, since Meta keeps attributing purchases for several days. The first sync loads 90 days and can take a few minutes.</div>
-        <div className="flex justify-between pt-1">
-          <button onClick={disconnect} className="text-xs text-red-400/80 hover:text-red-300">Disconnect Meta</button>
+        <div className="flex justify-end pt-1">
           <button onClick={onClose} className={primary}>Done</button>
         </div>
       </div>
@@ -437,6 +459,11 @@ export default function AnalyticsPage() {
         {data && (
           <div className="text-[11px] text-white/40 -mt-3">
             {days === "today" ? `Today so far (${data.period.end}) vs yesterday` : `${data.period.start} → ${data.period.end} vs previous ${data.period.days} days`} · last synced {data.account.last_sync_at ? new Date(data.account.last_sync_at).toLocaleString() : "never"} · purchases and revenue as reported by Meta (COD orders not yet adjusted for non-pickup)
+          </div>
+        )}
+        {info.connections.some((c) => c.last_error || (c.expires_at && Date.parse(c.expires_at) - Date.now() < 10 * 864e5)) && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+            A Meta login expires soon or stopped working. Open <b>Accounts</b> and log in again to keep syncing.
           </div>
         )}
         {error && <div className="text-sm text-red-400">{error}</div>}

@@ -54,30 +54,38 @@ async function graphAll(path: string, token: string, params: Record<string, stri
   return out;
 }
 
-/* ── Connection ─────────────────────────────────────────────────────────── */
+/* ── Connections ────────────────────────────────────────────────────────────
+ * Several connections can exist at once (different Facebook profiles / businesses, e.g. backup
+ * ad-account structures). Each ad account remembers the connection that last saw it; a sync uses
+ * that connection's token, falling back to any other connection that can still see the account.
+ */
 
-export async function getToken(): Promise<string | null> {
-  const { data } = await supabaseAdmin.from("meta_connections").select("access_token").order("id", { ascending: false }).limit(1).maybeSingle();
-  return (data?.access_token as string | undefined) ?? null;
-}
-
-export async function getConnection() {
+export async function listConnections() {
   const { data } = await supabaseAdmin.from("meta_connections")
-    .select("id, token_type, meta_user_name, expires_at, created_at").order("id", { ascending: false }).limit(1).maybeSingle();
-  return data;
+    .select("id, token_type, meta_user_id, meta_user_name, expires_at, last_error, created_at").order("id");
+  return data ?? [];
 }
 
-/** Validate a token, store it, and register every ad account it can see. */
+/** Token for an account: its own connection first, then every other connection as fallback. */
+async function tokensFor(accountId: string): Promise<{ id: number; token: string }[]> {
+  const [{ data: acc }, { data: all }] = await Promise.all([
+    supabaseAdmin.from("meta_ad_accounts").select("connection_id").eq("account_id", accountId).maybeSingle(),
+    supabaseAdmin.from("meta_connections").select("id, access_token").order("id", { ascending: false }),
+  ]);
+  const list = (all ?? []).map((c) => ({ id: c.id as number, token: c.access_token as string }));
+  return list.sort((x, y) => Number(y.id === acc?.connection_id) - Number(x.id === acc?.connection_id));
+}
+
+/** Validate a token, store it (one per Facebook profile / system user), and register every ad account it can see. */
 export async function connectToken(token: string, userId: string | null, tokenType = "system_user", expiresAt: string | null = null) {
   const me = await graph("me", token, { fields: "id,name" });
   const accounts = await graphAll("me/adaccounts", token, { fields: "account_id,name,currency,timezone_name,business{name},account_status", limit: "100" });
-  if (!accounts.length) throw new MetaError("This token can't see any ad accounts. Assign the ad accounts to it in Business settings first.");
+  if (!accounts.length) throw new MetaError("This login can't see any ad accounts. Give it access to the ad accounts first.");
 
-  // A token that was just verified replaces older ones
-  await supabaseAdmin.from("meta_connections").delete().gte("id", 0);
-  const { error } = await supabaseAdmin.from("meta_connections").insert({
-    access_token: token, token_type: tokenType, meta_user_name: me.name ?? null, expires_at: expiresAt, connected_by: userId,
-  });
+  const { data: conn, error } = await supabaseAdmin.from("meta_connections").upsert({
+    meta_user_id: String(me.id), access_token: token, token_type: tokenType, meta_user_name: me.name ?? null,
+    expires_at: expiresAt, connected_by: userId, last_error: null,
+  }, { onConflict: "meta_user_id" }).select("id").single();
   if (error) throw new Error(error.message);
 
   const rows = accounts.map((a) => ({
@@ -86,11 +94,21 @@ export async function connectToken(token: string, userId: string | null, tokenTy
     currency: (a.currency as string) ?? null,
     timezone: (a.timezone_name as string) ?? null,
     business_name: ((a.business as Json | undefined)?.name as string) ?? null,
-    market: guessMarket(String(a.name ?? "")),
+    account_status: num(a.account_status) || null,
+    connection_id: conn.id as number,
   }));
-  const { error: aErr } = await supabaseAdmin.from("meta_ad_accounts").upsert(rows, { onConflict: "account_id", ignoreDuplicates: false });
+  const { error: aErr } = await supabaseAdmin.from("meta_ad_accounts").upsert(rows, { onConflict: "account_id" });
   if (aErr) throw new Error(aErr.message);
+  // New accounts get a market guess; existing ones keep whatever was set by hand
+  for (const r of rows) {
+    const market = guessMarket(r.name);
+    if (market) await supabaseAdmin.from("meta_ad_accounts").update({ market }).eq("account_id", r.account_id).is("market", null);
+  }
   return { name: me.name as string, accounts: rows };
+}
+
+export async function removeConnection(id: number) {
+  await supabaseAdmin.from("meta_connections").delete().eq("id", id);
 }
 
 function guessMarket(name: string): string | null {
@@ -256,28 +274,36 @@ async function syncBreakdowns(accountId: string, token: string, since: Date, unt
 }
 
 export async function syncAccount(accountId: string, opts: { full?: boolean } = {}) {
-  const token = await getToken();
-  if (!token) throw new MetaError("Meta is not connected.");
+  const tokens = await tokensFor(accountId);
+  if (!tokens.length) throw new MetaError("Meta is not connected.");
   const { data: acc } = await supabaseAdmin.from("meta_ad_accounts").select("backfilled_at").eq("account_id", accountId).single();
   const full = opts.full || !acc?.backfilled_at;
   const until = new Date();
   const since = new Date(until.getTime() - ((full ? BACKFILL_DAYS : REFRESH_DAYS) - 1) * 864e5);
-  try {
-    const ads = await syncAds(accountId, token);
-    const rows = await syncInsights(accountId, token, since, until);
-    // Breakdowns change slowly: on frequent incremental runs only the last couple of days are refreshed
-    const bSince = full ? since : new Date(until.getTime() - (BREAKDOWN_REFRESH_DAYS - 1) * 864e5);
-    const breakdownRows = await syncBreakdowns(accountId, token, bSince, until);
-    const now = new Date().toISOString();
-    await supabaseAdmin.from("meta_ad_accounts").update({
-      last_sync_at: now, last_sync_error: null, ...(full ? { backfilled_at: now } : {}),
-    }).eq("account_id", accountId);
-    return { accountId, ads, rows, breakdownRows, since: day(since), until: day(until), full };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    await supabaseAdmin.from("meta_ad_accounts").update({ last_sync_error: msg.slice(0, 500) }).eq("account_id", accountId);
-    throw e;
+  let lastError: unknown = null;
+  for (const { id, token } of tokens) {
+    try {
+      const ads = await syncAds(accountId, token);
+      const rows = await syncInsights(accountId, token, since, until);
+      // Breakdowns change slowly: on frequent incremental runs only the last couple of days are refreshed
+      const bSince = full ? since : new Date(until.getTime() - (BREAKDOWN_REFRESH_DAYS - 1) * 864e5);
+      const breakdownRows = await syncBreakdowns(accountId, token, bSince, until);
+      const now = new Date().toISOString();
+      await supabaseAdmin.from("meta_ad_accounts").update({
+        last_sync_at: now, last_sync_error: null, connection_id: id, ...(full ? { backfilled_at: now } : {}),
+      }).eq("account_id", accountId);
+      return { accountId, ads, rows, breakdownRows, since: day(since), until: day(until), full };
+    } catch (e) {
+      lastError = e;
+      // 190 = token expired/revoked; 10/200/272 = no permission on this account: try the next connection
+      const code = e instanceof MetaError ? e.code : undefined;
+      if (code === 190) await supabaseAdmin.from("meta_connections").update({ last_error: "Login expired or revoked: reconnect" }).eq("id", id);
+      if (![190, 10, 200, 272, 100].includes(code ?? -1)) break;
+    }
   }
+  const msg = lastError instanceof Error ? lastError.message : String(lastError);
+  await supabaseAdmin.from("meta_ad_accounts").update({ last_sync_error: msg.slice(0, 500) }).eq("account_id", accountId);
+  throw lastError;
 }
 
 export async function syncAll() {

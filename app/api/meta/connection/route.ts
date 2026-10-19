@@ -1,26 +1,26 @@
 /**
  * /api/meta/connection
- *   GET    → { connected, connection, accounts, oauthAvailable }
+ *   GET    → { connected, connections, accounts, oauthAvailable }
  *   POST   { token } → validate + store a token, register its ad accounts
  *   PATCH  { account_id, sync_enabled?, market? } → choose which accounts sync
- *   DELETE → disconnect (removes the token; synced data stays)
+ *   DELETE ?id=… → remove one connection (synced data stays)
  */
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { resolveUserId } from "@/lib/guestMode";
-import { connectToken, getConnection } from "@/lib/meta";
+import { connectToken, listConnections, removeConnection } from "@/lib/meta";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   if (!(await resolveUserId(req))) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const [connection, { data: accounts }] = await Promise.all([
-    getConnection(),
+  const [connections, { data: accounts }] = await Promise.all([
+    listConnections(),
     supabaseAdmin.from("meta_ad_accounts").select("*").order("name"),
   ]);
   return NextResponse.json({
-    connected: !!connection,
-    connection,
+    connected: connections.length > 0,
+    connections,
     accounts: accounts ?? [],
     oauthAvailable: !!(process.env.META_APP_ID && process.env.META_APP_SECRET),
   });
@@ -55,6 +55,8 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   if (!(await resolveUserId(req))) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  await supabaseAdmin.from("meta_connections").delete().gte("id", 0);
+  const id = Number(req.nextUrl.searchParams.get("id"));
+  if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
+  await removeConnection(id);
   return NextResponse.json({ ok: true });
 }
