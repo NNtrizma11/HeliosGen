@@ -125,6 +125,7 @@ export async function askClaude(
   onProgress?: Progress,
 ): Promise<{ text: string; model: string; stats: ClaudeStats }> {
   let last = "";
+  let thinkingOff = true;
   for (const model of CLAUDE_CHAIN) {
     for (let attempt = 0; attempt < 3; attempt++) {
       if (attempt) await sleep(attempt * 4000);
@@ -133,10 +134,13 @@ export async function askClaude(
         method: "POST",
         cache: "no-store",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model, messages, stream: true, max_tokens: maxTokens }),
+        // Kie runs Sonnet with hidden extended thinking by default (~85% of output tokens
+        // on builds); structured JSON doesn't need it. Dropped if Kie rejects the field.
+        body: JSON.stringify({ model, messages, stream: true, max_tokens: maxTokens, ...(thinkingOff ? { thinking: { type: "disabled" } } : {}) }),
       });
       if (!res.ok) {
         const t = (await res.text()).slice(0, 300);
+        if (thinkingOff && res.status === 400 && /thinking/i.test(t)) { thinkingOff = false; attempt--; continue; }
         if (res.status === 429 || res.status >= 500 || CAPACITY.test(t)) { last = `${model}: ${res.status} ${t}`; continue; }
         throw new Error(`Model request failed (${res.status}): ${t}`);
       }

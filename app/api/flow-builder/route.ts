@@ -51,7 +51,7 @@ function keepAlive(work: () => Promise<object>): Response {
   });
 }
 
-interface Body { messages?: Msg[]; rules?: string; mode?: "build" | "edit"; targets?: EditTarget[] }
+interface Body { messages?: Msg[]; rules?: string; mode?: "build" | "edit"; targets?: EditTarget[]; assets?: string }
 
 /** The model call plus parsing. Returns the JSON the panel receives. */
 async function runBuilder(apiKey: string, body: Body, onProgress?: Parameters<typeof askClaude>[3]): Promise<object> {
@@ -67,9 +67,12 @@ async function runBuilder(apiKey: string, body: Body, onProgress?: Parameters<ty
     ? `\n\nTHE USER'S STANDING RULES (apply unless the request says otherwise):\n${body.rules.trim()}`
     : "";
   const catalog = `CATALOG — the only models and settings that exist on this canvas:\n${catalogText()}`;
+  const library = body.assets?.trim()
+    ? `\n\nASSET LIBRARY — the user's saved brand images (packaging, products, logos, characters). When the user mentions one of these (by name, product, flavor, brand or tag), add it as an "image_ref" node with exactly this "url" and use the asset name as label. If several fit, pick the closest and say which in "notes". Never invent URLs.\n${body.assets.trim().slice(0, 20000)}`
+    : "";
   const system = editing
-    ? `${NODE_EDIT_RULES}\n\nFLOW BUILDER FORMAT — use it only for the contents of "add" (ignore its top-level reply shape; your reply shape is the one above; "add" may also contain "series"):\n${FLOW_BUILDER_RULES}\n\n${catalog}${standing}${userBlocksText(stored)}\n\nSELECTED NODES:\n${JSON.stringify(body.targets, null, 2)}`
-    : `${FLOW_BUILDER_RULES}\n\n${catalog}${standing}${userBlocksText(stored)}`;
+    ? `${NODE_EDIT_RULES}\n\nFLOW BUILDER FORMAT — use it only for the contents of "add" (ignore its top-level reply shape; your reply shape is the one above; "add" may also contain "series"):\n${FLOW_BUILDER_RULES}\n\n${catalog}${library}${standing}${userBlocksText(stored)}\n\nSELECTED NODES:\n${JSON.stringify(body.targets, null, 2)}`
+    : `${FLOW_BUILDER_RULES}\n\n${catalog}${library}${standing}${userBlocksText(stored)}`;
 
   // Kie's Claude endpoint takes the instructions as an opening exchange.
   const messages: Msg[] = [

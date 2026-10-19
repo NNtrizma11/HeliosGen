@@ -2,7 +2,7 @@
 import React, { useState } from "react";
 import {
   Plus, MousePointer2, Hand, Scissors, LayoutTemplate,
-  MessageSquare, Undo2, Redo2, Share2,
+  MessageSquare, Undo2, Redo2, Share2, Package,
 } from "lucide-react";
 
 type ToolId = "select" | "hand" | "cut" | "frame" | "comment";
@@ -18,6 +18,8 @@ interface CanvasToolbarProps {
   onOpenSettings?: () => void;
   onShare?: () => void;
   isPublic?: boolean;
+  onOpenAssets?: () => void;
+  assetsOpen?: boolean;
 }
 
 function Divider() {
@@ -75,6 +77,8 @@ export default function CanvasToolbar({
   canRedo = false,
   onShare,
   isPublic = false,
+  onOpenAssets,
+  assetsOpen = false,
 }: CanvasToolbarProps) {
   const [internalTool, setInternalTool] = useState<ToolId>("select");
   const [addHovered, setAddHovered] = useState(false);
@@ -121,6 +125,12 @@ export default function CanvasToolbar({
       >
         <Plus size={16} strokeWidth={2.5} />
       </button>
+
+      {onOpenAssets && (
+        <Btn id="toolbar-assets" title="Assets: packaging, products, logos" active={assetsOpen} onClick={() => onOpenAssets()}>
+          <Package size={15} strokeWidth={1.8} />
+        </Btn>
+      )}
 
       <Divider />
 

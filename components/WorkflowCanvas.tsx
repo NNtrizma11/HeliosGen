@@ -37,6 +37,7 @@ import VideoGeneratorNode from "./nodes/VideoGeneratorNode";
 import AssistantNode from "./nodes/AssistantNode";
 import VoiceNode from "@/components/nodes/VoiceNode";
 import FlowBuilderPanel from "@/components/FlowBuilderPanel";
+import AssetPickerPanel from "@/components/AssetPickerPanel";
 import BatchRunPanel from "@/components/BatchRunPanel";
 import GroupNode from "./nodes/GroupNode";
 import NodePickerMenu, { DropState } from "./NodePickerMenu";
@@ -951,6 +952,7 @@ export default function WorkflowCanvas() {
   const activeSpaceId = useWorkflowStore((s) => s.activeSpaceId);
   const activeSpace = useWorkflowStore((s) => s.spaces.find((sp) => sp.id === s.activeSpaceId));
   const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [assetsOpen, setAssetsOpen] = useState(false);
 
   // ── Alignment snap guides ─────────────────────────────────────────────────────
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
@@ -1617,6 +1619,7 @@ export default function WorkflowCanvas() {
           )}
 
           <FlowBuilderPanel />
+          <AssetPickerPanel open={assetsOpen} onClose={() => setAssetsOpen(false)} />
           <BatchRunPanel />
 
           <Controls
@@ -1638,6 +1641,8 @@ export default function WorkflowCanvas() {
           onOpenSettings={() => setSettingsOpen(true)}
           onShare={() => setShareModalOpen(true)}
           isPublic={activeSpace?.isPublic ?? false}
+          onOpenAssets={() => setAssetsOpen((v) => !v)}
+          assetsOpen={assetsOpen}
         />
 
         {shareModalOpen && (
