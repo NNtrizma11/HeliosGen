@@ -6,6 +6,7 @@
  *                    versions of what works). Copy is written in the market's language.
  */
 import { NextRequest, NextResponse } from "next/server";
+import { askClaude } from "@/lib/kieClaude";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { resolveUserId } from "@/lib/guestMode";
 import { getKieToken } from "@/lib/getKieToken";
@@ -13,8 +14,6 @@ import { getKieToken } from "@/lib/getKieToken";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const MODEL = "claude-sonnet-4-6";
-const ENDPOINT = "https://api.kie.ai/claude/v1/messages";
 
 const LANGUAGE: Record<string, string> = { BG: "Bulgarian", RO: "Romanian", HU: "Hungarian", CZ: "Czech" };
 
@@ -62,26 +61,6 @@ function diagnose(ad: M, acc: M, prev: M) {
   return { weakest, findings };
 }
 
-async function readReply(res: Response): Promise<string> {
-  const raw = await res.text();
-  if (raw.trim().startsWith("{")) {
-    try {
-      const j = JSON.parse(raw);
-      const text = (j.content ?? []).filter((b: { type: string }) => b.type === "text").map((b: { text?: string }) => b.text ?? "").join("");
-      if (text) return text;
-      if (j.error) throw new Error(typeof j.error === "string" ? j.error : JSON.stringify(j.error));
-    } catch (e) { if (!(e instanceof SyntaxError)) throw e; }
-  }
-  let text = "";
-  for (const line of raw.split("\n")) {
-    if (!line.startsWith("data:")) continue;
-    try {
-      const p = JSON.parse(line.slice(5).trim());
-      if (p.type === "content_block_delta" && p.delta?.type === "text_delta") text += p.delta.text ?? "";
-    } catch { /* keep-alive lines */ }
-  }
-  return text;
-}
 
 function extractJson(text: string) {
   const start = text.indexOf("{"), end = text.lastIndexOf("}");
@@ -165,13 +144,8 @@ Reply with JSON only, no prose before or after:
 {"summary": string, "keep": [string], "items": [{"kind": "iteration"|"variation", "type": "hook"|"body"|"cta"|"offer"|"format"|"angle"|"persona"|"visual", "title": string, "what_changes": string, "why": string, "hook": string, "script": string, "visual_direction": string, "priority": 1|2|3}]}`;
 
   try {
-    const upstream = await fetch(ENDPOINT, {
-      method: "POST", cache: "no-store",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: MODEL, messages: [{ role: "user", content: prompt }], stream: true, max_tokens: 6000 }),
-    });
-    if (!upstream.ok) return NextResponse.json({ error: `Model request failed (${upstream.status}): ${(await upstream.text()).slice(0, 300)}` }, { status: 502 });
-    const suggestions = extractJson(await readReply(upstream));
+    const { text: reply } = await askClaude(apiKey, [{ role: "user", content: prompt }], 6000);
+    const suggestions = extractJson(reply);
     const { data: saved, error } = await supabaseAdmin.from("meta_ad_iterations").insert({
       ad_id: ad.ad_id, created_by: userId, metrics: { ad: adNow, account: accNow, previous: adPrev }, diagnosis, suggestions,
     }).select().single();
