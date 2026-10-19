@@ -54,7 +54,7 @@ function keepAlive(work: () => Promise<object>): Response {
 interface Body { messages?: Msg[]; rules?: string; mode?: "build" | "edit"; targets?: EditTarget[] }
 
 /** The model call plus parsing. Returns the JSON the panel receives. */
-async function runBuilder(apiKey: string, body: Body): Promise<object> {
+async function runBuilder(apiKey: string, body: Body, onProgress?: Parameters<typeof askClaude>[3]): Promise<object> {
   const editing = body.mode === "edit" && Array.isArray(body.targets) && body.targets.length > 0;
   const history = (body.messages ?? []).filter(
     (m) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.trim(),
@@ -78,7 +78,7 @@ async function runBuilder(apiKey: string, body: Body): Promise<object> {
     ...history,
   ];
 
-  const { text: reply } = await askClaude(apiKey, messages, 32000);
+  const { text: reply, stats } = await askClaude(apiKey, messages, 32000, onProgress);
 
   if (editing) {
     let edit: EditPlan;
@@ -93,7 +93,7 @@ async function runBuilder(apiKey: string, body: Body): Promise<object> {
       expandSeries(edit.add);
       edit.add.blocks = { ...stored, ...(edit.add.blocks ?? {}) };
     }
-    return { edit, validation: validateEdit(body.targets!, edit) };
+    return { edit, validation: validateEdit(body.targets!, edit), stats };
   }
 
   let plan: FlowPlan;
@@ -105,12 +105,12 @@ async function runBuilder(apiKey: string, body: Body): Promise<object> {
   expandSeries(plan);
   plan.blocks = { ...stored, ...(plan.blocks ?? {}) };
   const validation = validatePlan(plan);
-  return { plan, validation };
+  return { plan, validation, stats };
 }
 
-async function safeRun(apiKey: string, body: Body): Promise<object> {
+async function safeRun(apiKey: string, body: Body, onProgress?: Parameters<typeof askClaude>[3]): Promise<object> {
   try {
-    return await runBuilder(apiKey, body);
+    return await runBuilder(apiKey, body, onProgress);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[flow-builder]", msg);
@@ -144,7 +144,11 @@ export async function POST(req: NextRequest) {
     if (error || !job) return keepAlive(() => safeRun(apiKey, body)); // table unavailable: fall back to streaming
 
     // Runs after the response; the Node server keeps it alive until it finishes.
-    void safeRun(apiKey, body).then(async (result) => {
+    // Live progress (characters written so far) for the panel
+    const progress: Parameters<typeof askClaude>[3] = (p) => {
+      void supabaseAdmin.from("flow_builder_jobs").update({ progress: p }).eq("id", job.id).eq("status", "running");
+    };
+    void safeRun(apiKey, body, progress).then(async (result) => {
       const failed = "error" in result;
       const { error: saveErr } = await supabaseAdmin.from("flow_builder_jobs")
         .update({ status: failed ? "error" : "done", result, finished_at: new Date().toISOString() })
@@ -167,12 +171,12 @@ export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("job");
   if (!id) return NextResponse.json({ error: "job required" }, { status: 400 });
   const { data, error } = await supabaseAdmin.from("flow_builder_jobs")
-    .select("status,result,created_at").eq("id", id).eq("user_id", userId).maybeSingle();
+    .select("status,result,progress,created_at").eq("id", id).eq("user_id", userId).maybeSingle();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!data) return NextResponse.json({ status: "missing" });
   // A job still "running" after 20 minutes was lost (e.g. the server restarted during a deploy).
   if (data.status === "running" && Date.now() - new Date(data.created_at).getTime() > 20 * 60_000) {
     return NextResponse.json({ status: "error", result: { error: "The build was interrupted (the server restarted). Please send it again." } });
   }
-  return NextResponse.json({ status: data.status, result: data.result, createdAt: data.created_at });
+  return NextResponse.json({ status: data.status, result: data.result, progress: data.progress, createdAt: data.created_at });
 }
