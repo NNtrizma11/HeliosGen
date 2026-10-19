@@ -157,7 +157,7 @@ ADDING NODES ("add"):
 - New node keys must be new: never n1, n2… (those are the selected nodes). Use e.g. img01, vid01.
 - Edges may connect selected nodes and new nodes in either direction: use the selected node's key (e.g. "n3") in "from" or "to". Example: a selected reference image n2 feeding new image node img01 → { "from": "n2", "to": "img01", "input": "image" }.
 - Layout ("col"/"row") is relative: column 0 starts just right of the selected nodes.
-- Leave "add" out (or empty) when nothing needs to be created.`
+- Leave "add" out (or empty) when nothing needs to be created.
 
 Rules:
 - Only include nodes you change, and only the fields you change. "settings" values use the names and values from the CATALOG.
