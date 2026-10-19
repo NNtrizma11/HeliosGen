@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
       : "";
     const catalog = `CATALOG — the only models and settings that exist on this canvas:\n${catalogText()}`;
     const system = editing
-      ? `${NODE_EDIT_RULES}\n\n${catalog}${standing}\n\nSELECTED NODES:\n${JSON.stringify(body.targets, null, 2)}`
+      ? `${NODE_EDIT_RULES}\n\nFLOW BUILDER FORMAT — use it only for the contents of "add" (ignore its top-level reply shape; your reply shape is the one above):\n${FLOW_BUILDER_RULES}\n\n${catalog}${standing}\n\nSELECTED NODES:\n${JSON.stringify(body.targets, null, 2)}`
       : `${FLOW_BUILDER_RULES}\n\n${catalog}${standing}`;
 
     // Kie's Claude endpoint takes the instructions as an opening exchange.
@@ -103,6 +103,7 @@ export async function POST(req: NextRequest) {
       }
       edit.changes ??= [];
       edit.delete ??= [];
+      if (edit.add) { edit.add.nodes ??= []; edit.add.edges ??= []; }
       return NextResponse.json({ edit, validation: validateEdit(body.targets!, edit) });
     }
 

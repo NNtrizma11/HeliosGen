@@ -10,7 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Node, Edge } from "@xyflow/react";
 import type { NodeData } from "./store";
-import { validatePlan, type PlanNode, type PlanNodeType, type ValidationResult } from "./flowBuilder";
+import { validatePlan, planToGraph, type PlanNode, type PlanNodeType, type PlanEdge, type ValidationResult } from "./flowBuilder";
 import { VOICE_MODELS } from "./voiceConfig";
 import { edgeStyle } from "./edgeStyles";
 
@@ -52,11 +52,19 @@ export interface EditChange {
   prompt?: string;
 }
 
+/** New nodes to create next to the selection. Edges may connect them to selected nodes by key (n1, n2…). */
+export interface EditAdd {
+  blocks?: Record<string, string>;
+  nodes: PlanNode[];
+  edges: PlanEdge[];
+}
+
 export interface EditPlan {
   message?: string;
   problems?: string[];
   changes?: EditChange[];
   delete?: string[];
+  add?: EditAdd;
 }
 
 const defined = (o: Record<string, unknown>) =>
@@ -130,17 +138,26 @@ export function snapshotTargets(
   return { targets, refs };
 }
 
-export const NODE_EDIT_RULES = `You edit EXISTING nodes on a visual canvas for AI image, video and voice generation. You never run anything.
+export const NODE_EDIT_RULES = `You work on a visual canvas for AI image, video and voice generation. The user selected some EXISTING nodes and chats about them. You can change them, delete them, and ADD new nodes connected to them. You never run anything.
 
-You receive the nodes the user selected as JSON: key, type, label, settings, prompt (the full current prompt text) and inputs (connections, read-only).
+You receive the selected nodes as JSON: key (n1, n2…), type, label, settings, prompt (the full current prompt text) and inputs (connections, read-only).
 
 Reply with ONE JSON object and nothing else (no markdown fences):
 {
-  "message": "one or two sentences telling the user what you changed (or answering their question)",
+  "message": "one or two sentences telling the user what you changed, added (or answering their question)",
   "problems": [],
   "changes": [ { "key": "n1", "label": "optional new name", "settings": { "duration": 10 }, "prompt": "optional full new prompt" } ],
-  "delete": []
+  "delete": [],
+  "add": { "blocks": {}, "nodes": [], "edges": [] }
 }
+
+ADDING NODES ("add"):
+- Use "add" whenever the user asks to create, build, add, duplicate or extend nodes (for example "make 27 image and video nodes from these references").
+- "add.nodes", "add.edges" and "add.blocks" use EXACTLY the node, edge, prompt, block, settings and layout format of the flow builder described below.
+- New node keys must be new: never n1, n2… (those are the selected nodes). Use e.g. img01, vid01.
+- Edges may connect selected nodes and new nodes in either direction: use the selected node's key (e.g. "n3") in "from" or "to". Example: a selected reference image n2 feeding new image node img01 → { "from": "n2", "to": "img01", "input": "image" }.
+- Layout ("col"/"row") is relative: column 0 starts just right of the selected nodes.
+- Leave "add" out (or empty) when nothing needs to be created.`
 
 Rules:
 - Only include nodes you change, and only the fields you change. "settings" values use the names and values from the CATALOG.
@@ -148,7 +165,6 @@ Rules:
 - When you switch a model, also change any setting that the new model does not support to the closest valid value.
 - Put a key in "delete" ONLY when the user clearly asks to delete or remove that node.
 - Reference image nodes (type image_ref) can only be renamed or deleted.
-- You cannot add nodes or connections here. If asked, put that in "problems" and suggest deselecting all nodes to use the builder.
 - If the user only asks a question about the nodes, answer in "message" and return no changes.
 - If the request is unclear or impossible, return no changes and explain in "problems".`;
 
@@ -179,6 +195,16 @@ export function validateEdit(targets: EditTarget[], plan: EditPlan): ValidationR
   }
 
   const v = validatePlan({ nodes: merged, edges: [] });
+
+  // New nodes are validated together with the selected nodes, so edges between them are checked too
+  const add = plan.add;
+  if (add && (add.nodes?.length || add.edges?.length)) {
+    for (const n of add.nodes ?? []) if (byKey.has(n.key)) errors.push(`New node key "${n.key}" clashes with a selected node.`);
+    const existing: PlanNode[] = targets.map((t) => ({ key: t.key, type: t.type, label: t.label, settings: { ...t.settings } }));
+    const va = validatePlan({ blocks: add.blocks, nodes: [...existing, ...(add.nodes ?? []).map((n) => ({ ...n }))], edges: add.edges ?? [] });
+    errors.push(...va.errors);
+    warnings.push(...va.warnings);
+  }
   return { errors: [...errors, ...v.errors], warnings: [...warnings, ...v.warnings] };
 }
 
@@ -251,4 +277,37 @@ export function editToStoreOps(plan: EditPlan, refs: TargetRef[], nodes: Node<No
   }
 
   return { updates, removeNodeIds, removeEdgeIds, addNodes, addEdges, changedIds: changed };
+}
+
+/**
+ * Build canvas nodes for plan.add, placed to the right of the selection, and connect them to the
+ * selected nodes. Returns nodes/edges ready for applyNodeEdit plus image URLs to import.
+ */
+export function addToGraph(add: EditAdd, refs: TargetRef[], nodes: Node<NodeData>[]) {
+  const byKey = new Map(refs.map((r) => [r.key, r]));
+  const selected = refs.map((r) => nodes.find((n) => n.id === r.nodeId)).filter((n): n is Node<NodeData> => !!n);
+  let maxX = 0, minY = 0;
+  selected.forEach((n, i) => {
+    const w = n.measured?.width ?? (n.style?.width as number | undefined) ?? 300;
+    maxX = i ? Math.max(maxX, n.position.x + w) : n.position.x + w;
+    minY = i ? Math.min(minY, n.position.y) : n.position.y;
+  });
+  const origin = { x: maxX + 300, y: minY };
+
+  const internal = (add.edges ?? []).filter((e) => !byKey.has(e.from) && !byKey.has(e.to));
+  const graph = planToGraph({ blocks: add.blocks, nodes: add.nodes ?? [], edges: internal }, origin);
+
+  const extra: Edge[] = [];
+  for (const e of add.edges ?? []) {
+    if (!byKey.has(e.from) && !byKey.has(e.to)) continue;
+    const source = byKey.get(e.from)?.nodeId ?? graph.ids[e.from];
+    const target = byKey.get(e.to)?.nodeId ?? graph.ids[e.to];
+    if (!source || !target) continue;
+    const fromVoice = byKey.get(e.from)?.type === "voice" || add.nodes?.find((n) => n.key === e.from)?.type === "voice";
+    extra.push({
+      id: `e-${uid()}`, source, target, sourceHandle: fromVoice ? "audioRefOut" : null, targetHandle: e.input,
+      animated: false, style: edgeStyle(e.input),
+    });
+  }
+  return { nodes: graph.nodes, edges: [...graph.edges, ...extra], imports: graph.imports };
 }

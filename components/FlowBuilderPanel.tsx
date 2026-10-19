@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { planToGraph, type FlowPlan, type ValidationResult, type PlanNode } from "@/lib/flowBuilder";
 import { IMAGE_MODELS, VIDEO_MODELS } from "@/lib/modelConfig";
 import { VOICES } from "@/lib/voiceConfig";
-import { EDITABLE_NODE_TYPES, snapshotTargets, editToStoreOps, type EditPlan } from "@/lib/nodeEdit";
+import { EDITABLE_NODE_TYPES, snapshotTargets, editToStoreOps, addToGraph, type EditPlan } from "@/lib/nodeEdit";
 
 interface ChatEntry {
   role: "user" | "assistant";
@@ -137,6 +137,7 @@ export default function FlowBuilderPanel() {
     const problems = [...(edit.problems ?? []), ...(validation?.errors ?? [])];
     const changes = edit.changes ?? [];
     const deletes = edit.delete ?? [];
+    const adds = edit.add?.nodes ?? [];
 
     if (problems.length) {
       setChat((c) => [...c, {
@@ -146,13 +147,32 @@ export default function FlowBuilderPanel() {
       }]);
       return;
     }
-    if (!changes.length && !deletes.length) {
+    if (!changes.length && !deletes.length && !adds.length) {
       setChat((c) => [...c, { role: "assistant", tone: "ok", edit: true, content: edit.message ?? "No changes needed." }]);
       return;
     }
 
     const ops = editToStoreOps(edit, refs, useWorkflowStore.getState().nodes);
+    // New nodes go next to the selection and are wired to it, in the same undo step
+    const added = edit.add && adds.length ? addToGraph(edit.add, refs, useWorkflowStore.getState().nodes) : null;
+    if (added) {
+      ops.addNodes = [...ops.addNodes, ...added.nodes];
+      ops.addEdges = [...ops.addEdges, ...added.edges];
+    }
     applyNodeEdit(ops);
+    if (added) {
+      setTimeout(() => fitView({ nodes: added.nodes.map((n) => ({ id: n.id })), padding: 0.1, duration: 600 }), 100);
+      for (const imp of added.imports) {
+        fetch("/api/fetch-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ url: imp.url }),
+        })
+          .then((r) => r.json())
+          .then((j: { cdnUrl?: string }) => { if (j.cdnUrl) updateNodeData(imp.nodeId, { r2Url: j.cdnUrl, inputImage: j.cdnUrl }); })
+          .catch(() => { /* keep the original URL */ });
+      }
+    }
     const labelOf = (k: string) => targets.find((t) => t.key === k)?.label ?? k;
     setChat((c) => [...c, {
       role: "assistant", tone: "ok", edit: true,
@@ -168,11 +188,12 @@ export default function FlowBuilderPanel() {
           return `✓ ${labelOf(ch.key)}: ${parts.join(", ") || "updated"}`;
         }),
         ...deletes.map((k) => `🗑 Deleted ${labelOf(k)}`),
+        ...(adds.length ? [`＋ Added ${adds.length} node${adds.length === 1 ? "" : "s"} (${[...new Set(adds.map((n) => n.type))].join(", ")}) connected to the selection`] : []),
         ...(validation?.warnings ?? []).map((w) => `Warning: ${w}`),
         "Nothing was generated. Ctrl+Z undoes this edit.",
       ],
     }]);
-  }, [attachedNodes, rules, applyNodeEdit]);
+  }, [attachedNodes, rules, applyNodeEdit, fitView, updateNodeData]);
 
   const send = useCallback(async () => {
     const text = input.trim();
@@ -273,7 +294,7 @@ export default function FlowBuilderPanel() {
       >
         <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10">
           <span className="font-semibold text-violet-200">✦ Build with AI</span>
-          <span className="text-[11px] text-gray-500">{editing ? "edits selected nodes, never generates" : "builds nodes only, never generates"}</span>
+          <span className="text-[11px] text-gray-500">{editing ? "edits, extends and connects selected nodes, never generates" : "builds nodes only, never generates"}</span>
           <button type="button" className="ml-auto text-gray-400 hover:text-white" onClick={() => setOpen(false)}>✕</button>
         </div>
 
@@ -297,7 +318,7 @@ export default function FlowBuilderPanel() {
               )}
             </div>
           ))}
-          {busy && <div className="text-xs text-amber-300 animate-pulse">{editing ? "Editing the selected nodes…" : "Planning the flow… long requests can take a minute or two."}</div>}
+          {busy && <div className="text-xs text-amber-300 animate-pulse">{editing ? "Working on the selected nodes… adding many nodes can take a minute or two." : "Planning the flow… long requests can take a minute or two."}</div>}
         </div>
 
         <div className="border-t border-white/10 p-3 space-y-2">
@@ -342,7 +363,7 @@ export default function FlowBuilderPanel() {
           )}
           <textarea
             className="w-full h-28 resize-none rounded-lg bg-[#1a1a1a] border border-white/10 px-2 py-1.5 text-xs focus:outline-none"
-            placeholder={editing ? "What should change? e.g. “make it 10 seconds with sound”, “rewrite the prompt at night”, “delete this node”" : "Describe the flow to build…"}
+            placeholder={editing ? "What should change or be added? e.g. “make it 10 seconds with sound”, “from these references build 5 image + video nodes”, “delete this node”" : "Describe the flow to build…"}
             value={input}
             disabled={busy}
             onChange={(e) => setInput(e.target.value)}
