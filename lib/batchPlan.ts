@@ -1,5 +1,6 @@
 // Planning for staged mass generation: which nodes run, which are skipped and why, and the cost.
 import type { Node, Edge } from "@xyflow/react";
+import { HANDLE_LABEL } from "./videoCaps";
 import type { NodeData } from "./store";
 import { VIDEO_MODELS } from "./modelConfig";
 import { resolveInputs } from "./executor";
@@ -76,7 +77,10 @@ export function planBatch(
       if (!cfg?.promptOptional && !inputs.prompt?.trim()) reason = "no prompt";
       else if (incoming.some((e) => e.targetHandle === "startFrame") && !inputs.startFrameUrl) reason = "start frame image not generated yet";
       else if (incoming.some((e) => e.targetHandle === "endFrame") && !inputs.endFrameUrl) reason = "end frame image not generated yet";
-      else if (cfg?.requiredHandles?.some((h) => !incoming.some((e) => e.targetHandle === h))) reason = "a required input is not connected";
+      else if (cfg?.requiredHandles?.some((h) => !incoming.some((e) => e.targetHandle === h))) {
+        const missing = cfg.requiredHandles.filter((h) => !incoming.some((e) => e.targetHandle === h));
+        reason = `needs ${missing.map((h) => HANDLE_LABEL[h] ?? h).join(" + ")} connected`;
+      }
     } else if (stage === "images") {
       if (!inputs.prompt?.trim()) reason = "no prompt";
       else if (incoming.filter((e) => e.targetHandle === "image").length > inputs.imageUrls.length) reason = "a reference image is still empty";
