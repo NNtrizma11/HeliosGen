@@ -1102,7 +1102,7 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
               {!data.imageUrl && <ChevronIcon open={modelOpen} />}
             </button>
             {modelPopup.visible && (
-              <div className={`absolute bottom-full left-0 mb-2 w-48 bg-[#111622] border border-[#1E2840] rounded-md overflow-hidden z-[1002] shadow-2xl ${modelPopup.className}`}>
+              <div className={`absolute bottom-full left-0 mb-2 w-48 bg-[#111622] border border-[#1E2840] rounded-md overflow-y-auto overscroll-contain max-h-[min(60vh,520px)] nowheel z-[1002] shadow-2xl ${modelPopup.className}`} onWheel={(e) => e.stopPropagation()}>
                 {[...new Set(MODELS.map(m => m.meta))].map((provider, pi) => (
                   <Fragment key={provider}>
                     {pi > 0 && <div className="border-t border-white/[0.06] mx-2 my-0.5" />}
@@ -1185,7 +1185,7 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
               <ChevronIcon open={ratioOpen} />
             </button>
             {ratioPopup.visible && (
-              <div className={`absolute bottom-full left-0 mb-2 ${azureCustomSizeOpen ? "w-56" : "w-32"} bg-[#111622] border border-[#1E2840] rounded-md overflow-hidden z-[1002] shadow-2xl ${ratioPopup.className}`}>
+              <div className={`absolute bottom-full left-0 mb-2 ${azureCustomSizeOpen ? "w-56" : "w-32"} bg-[#111622] border border-[#1E2840] rounded-md overflow-y-auto overscroll-contain max-h-[min(60vh,520px)] nowheel z-[1002] shadow-2xl ${ratioPopup.className}`} onWheel={(e) => e.stopPropagation()}>
                 {!azureCustomSizeOpen ? (
                   <>
                     {caps.ratios.map((r) => {

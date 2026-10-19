@@ -1899,7 +1899,7 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
                       style={{ backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)" }}
                     >−</button>
                     <Pill onClick={() => { setDurOpen((o) => !o); setModelOpen(false); setRatioOpen(false); setModeOpen(false); setGrokResOpen(false); }}>
-                      <span className="text-[11px] text-white/70 tabular-nums">{duration}s</span>
+                      <span className="text-[11px] text-white/70 tabular-nums">{duration === -1 ? "Auto" : `${duration}s`}</span>
                       <ChevronIcon open={durOpen} />
                     </Pill>
                     <button
@@ -1922,7 +1922,7 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
                           onMouseDown={(e) => e.stopPropagation()}
                           onPointerDown={(e) => e.stopPropagation()}
                         >
-                          <span className="text-[11px] text-[#AAA] tabular-nums shrink-0 w-6">{duration}s</span>
+                          <span className="text-[11px] text-[#AAA] tabular-nums shrink-0 w-6">{duration === -1 ? "Auto" : `${duration}s`}</span>
                           <div className="w-px h-3.5 shrink-0" style={{ background: "#2A2A2A" }} />
                           <input
                             type="range"
@@ -2152,7 +2152,10 @@ function FloatMenu({ children, fullWidth = false, open }: { children: React.Reac
   const { visible, className } = useAnimatedPopup(open);
   if (!visible) return null;
   return (
-    <div className={`absolute bottom-full left-0 mb-1.5 bg-[#111622] border border-[#222] rounded-xl overflow-hidden z-[1002] shadow-2xl ${className}`}>
+    <div
+      className={`nowheel absolute bottom-full left-0 mb-1.5 bg-[#111622] border border-[#222] rounded-xl overflow-y-auto overscroll-contain max-h-[min(60vh,520px)] z-[1002] shadow-2xl ${className}`}
+      onWheel={(e) => e.stopPropagation()}
+    >
       {children}
     </div>
   );
