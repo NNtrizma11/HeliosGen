@@ -244,6 +244,25 @@ body {
   cursor: crosshair;
 }
 
+/* Outputs (right) are rounded squares with an outward arrow; inputs (left) stay round,
+   so "what goes in" and "what comes out" can't be confused. */
+.react-flow__handle-right.node-handle-icon.react-flow__handle {
+  border-radius: 9px !important;
+  overflow: visible;
+}
+.react-flow__handle-right.node-handle-icon.react-flow__handle::after {
+  content: "";
+  position: absolute;
+  right: -7px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
 /* Hidden: offset outward */
 .react-flow__handle-left.node-handle-icon {
   transform: translate(calc(-100% - 10px), -50%) !important;
