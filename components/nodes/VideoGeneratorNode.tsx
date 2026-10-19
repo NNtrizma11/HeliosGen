@@ -160,6 +160,15 @@ function resolveMentions(
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
+/**
+ * CSS aspect-ratio for a model ratio. Non-numeric ratios ("adaptive", "auto") follow the
+ * connected source video when known, else 9:16, so the card never collapses to zero height.
+ */
+function cssRatio(ratio: string, fallback?: string): string {
+  if (/^\d+(\.\d+)?:\d+(\.\d+)?$/.test(ratio)) return ratio.replace(":", " / ");
+  return fallback ?? "9 / 16";
+}
+
 export default function VideoGeneratorNode({ id, data, selected }: NodeProps<VideoGeneratorNodeType>) {
   const readOnly = useReadOnly();
   const updateNodeData = useWorkflowStore((s) => s.updateNodeData);
@@ -379,6 +388,12 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
   const resolution = (data.grokResolution as string) ?? cfg.defaultResolution ?? "";
   const duration = (data.duration as number) ?? cfg.defaultDuration;
   const aspectRatio = (data.aspectRatio as string) ?? cfg.defaultRatio;
+  // Shape of a connected source video (for "adaptive" models that keep the input's shape)
+  const upstreamVideoRatio = useWorkflowStore((st) => {
+    const e = st.edges.find((x) => x.target === id && (x.targetHandle === "referenceVideo" || x.targetHandle === "videoRef"));
+    const src = e ? st.nodes.find((n) => n.id === e.source) : undefined;
+    return ((src?.data?.videoAspectRatio ?? src?.data?.imageNaturalRatio) as string | undefined) ?? undefined;
+  });
   const sound = (data.sound as boolean) ?? false;
   const seed = (data.seed as number | undefined) ?? 0;
   const status = (data.status as string) ?? "idle";
@@ -1168,7 +1183,7 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
       className={`video-node-card node-card w-full${animBusy ? " node-generating" : ""}${isQueued ? " node-queued" : ""}${(data.hasError as boolean) ? " node-error-blink" : ""}`}
       style={{
         minWidth: 320,
-        aspectRatio: (data.imageNaturalRatio as string | undefined) ?? aspectRatio.replace(":", " / "),
+        aspectRatio: (data.imageNaturalRatio as string | undefined) ?? cssRatio(aspectRatio, upstreamVideoRatio),
       }}
       onMouseEnter={() => setHovering(true)}
       onMouseLeave={closeAll}
@@ -1314,7 +1329,7 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
       <div
         className="relative bg-[#2a2d35] group/player group/gen"
         style={{
-          aspectRatio: (data.imageNaturalRatio as string | undefined) ?? aspectRatio.replace(":", " / "),
+          aspectRatio: (data.imageNaturalRatio as string | undefined) ?? cssRatio(aspectRatio, upstreamVideoRatio),
           width: "100%",
           transition: "aspect-ratio 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
         }}
