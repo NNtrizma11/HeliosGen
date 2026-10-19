@@ -21,11 +21,11 @@ const VIDEO_SRC_COLORS: Record<string, string> = {
 };
 
 const VIDEO_SOURCE_HANDLES = [
-  { id: "startFrameOut", type: "image", label: "Start frame",     icon: <VidSrcFrameStartIcon /> },
-  { id: "endFrameOut",   type: "image", label: "End frame",       icon: <VidSrcFrameEndIcon /> },
-  { id: "imagePickOut",  type: "image", label: "Image pick",      icon: <VidSrcImagePickIcon /> },
-  { id: "videoRefOut",   type: "video", label: "Reference video", icon: <VidSrcVideoIcon /> },
-  { id: "audioRefOut",   type: "audio", label: "Reference audio", icon: <VidSrcAudioIcon /> },
+  { id: "startFrameOut", type: "image", label: "Output · first frame of this video", icon: <VidSrcFrameStartIcon /> },
+  { id: "endFrameOut",   type: "image", label: "Output · last frame of this video",  icon: <VidSrcFrameEndIcon /> },
+  { id: "imagePickOut",  type: "image", label: "Output · frame you pick",            icon: <VidSrcImagePickIcon /> },
+  { id: "videoRefOut",   type: "video", label: "Output · this video",                icon: <VidSrcVideoIcon /> },
+  { id: "audioRefOut",   type: "audio", label: "Output · this video's audio",        icon: <VidSrcAudioIcon /> },
 ] as const;
 const VIDEO_SOURCE_HANDLE_SPACING = 32; // px between source handles
 // Fixed slot offset from the node's vertical center — keeps the whole stack centered

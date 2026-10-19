@@ -62,11 +62,11 @@ const SOURCE_HANDLE_COLORS: Record<string, string> = {
 };
 
 const SOURCE_HANDLES = [
-  { id: "startFrameOut", type: "image", label: "Start frame", icon: <SrcFrameStartIcon /> },
-  { id: "endFrameOut", type: "image", label: "End frame", icon: <SrcFrameEndIcon /> },
-  { id: "imagePickOut", type: "image", label: "Image pick", icon: <SrcImagePickIcon /> },
-  { id: "videoRefOut", type: "video", label: "Reference video", icon: <SrcVideoIcon /> },
-  { id: "audioRefOut", type: "audio", label: "Reference audio", icon: <SrcAudioIcon /> },
+  { id: "startFrameOut", type: "image", label: "Output · first frame of this video", icon: <SrcFrameStartIcon /> },
+  { id: "endFrameOut", type: "image", label: "Output · last frame of this video", icon: <SrcFrameEndIcon /> },
+  { id: "imagePickOut", type: "image", label: "Output · frame you pick", icon: <SrcImagePickIcon /> },
+  { id: "videoRefOut", type: "video", label: "Output · this video", icon: <SrcVideoIcon /> },
+  { id: "audioRefOut", type: "audio", label: "Output · this video's audio", icon: <SrcAudioIcon /> },
 ] as const;
 const SOURCE_HANDLE_SPACING = 32; // px between source handles
 // Fixed slot offset from the node's vertical center — keeps the whole stack centered
@@ -607,6 +607,9 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
       label = "Character";
       className = "node-handle-icon node-handle-icon-character";
     }
+    if (h.id === "videoRef") label = "Motion video (movement to copy)";
+    const required = (cfg.requiredHandles as string[] | undefined)?.includes(h.id);
+    label = `Input · ${label}${required ? " · required" : ""}`;
     return { ...h, label, className };
   });
   const ratios = cfg.ratios;
