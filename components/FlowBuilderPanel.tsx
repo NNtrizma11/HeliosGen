@@ -86,7 +86,9 @@ function savePending(p: PendingJob | null) {
 }
 
 /** Poll a server build job until it finishes. */
-async function pollJob(jobId: string, token: string): Promise<Record<string, unknown>> {
+type JobProgress = { textChars: number; thinkingChars: number; seconds: number };
+
+async function pollJob(jobId: string, token: string, onProgress?: (p: JobProgress) => void): Promise<Record<string, unknown>> {
   for (let i = 0; ; i++) {
     await new Promise((r) => setTimeout(r, i < 10 ? 2000 : 4000));
     let j: Record<string, unknown>;
@@ -96,14 +98,14 @@ async function pollJob(jobId: string, token: string): Promise<Record<string, unk
     } catch {
       continue; // network blip: keep polling
     }
-    if (j.status === "running") continue;
+    if (j.status === "running") { if (j.progress && onProgress) onProgress(j.progress as JobProgress); continue; }
     if (j.status === "missing") return { error: "This build could not be found any more." };
     return (j.result as Record<string, unknown>) ?? { error: String(j.error ?? "The build failed.") };
   }
 }
 
 /** Start a build on the server and wait for it. onStart receives the job id (to remember it). */
-async function runJob(body: object, token: string, onStart: (jobId: string) => void): Promise<Record<string, unknown>> {
+async function runJob(body: object, token: string, onStart: (jobId: string) => void, onProgress?: (p: JobProgress) => void): Promise<Record<string, unknown>> {
   const res = await fetch("/api/flow-builder", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -112,7 +114,7 @@ async function runJob(body: object, token: string, onStart: (jobId: string) => v
   const json = await readJson(res);
   if (typeof json.jobId !== "string") return json; // guest mode or an immediate error
   onStart(json.jobId);
-  return pollJob(json.jobId, token);
+  return pollJob(json.jobId, token, onProgress);
 }
 
 /** "Estimated cost if you run everything: …" for newly created nodes. */
@@ -137,6 +139,13 @@ function costLine(created: Node<NodeData>[]): string | null {
   const unknown = keys.reduce((a, k) => a + groups[k].unknown, 0);
   return `Estimated cost to run everything: ${parts.join(" · ")} · total ≈ ${fmt(total)} cr (${formatUsd(creditsToUsd(total))})`
     + (unknown ? `. ${unknown} node${unknown === 1 ? " has" : "s have"} no known price yet (shown after the first run).` : ".");
+}
+
+/** "AI: 3.1s to start, 41s thinking/writing, 4,120 output tokens" from the job's stats. */
+function timingLine(json: Record<string, unknown>): string | null {
+  const s = json.stats as { model?: string; firstText?: number | null; total?: number; thinkingChars?: number; outputTokens?: number | null } | undefined;
+  if (!s?.total) return null;
+  return `Timing: ${s.total}s on ${s.model ?? "Claude"}${s.firstText != null ? ` (first text after ${s.firstText}s${s.thinkingChars ? `, after thinking ${s.thinkingChars.toLocaleString("en-US")} chars` : ""})` : ""}${s.outputTokens ? `, ${s.outputTokens.toLocaleString("en-US")} output tokens` : ""}.`;
 }
 
 export default function FlowBuilderPanel() {
@@ -169,6 +178,7 @@ export default function FlowBuilderPanel() {
   const [showRules, setShowRules] = useState(false);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [progress, setProgress] = useState<JobProgress | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const loadedChatFor = useRef<string | null>(null);
   const resumed = useRef(false);
@@ -332,6 +342,7 @@ export default function FlowBuilderPanel() {
         plan.message ?? "Built the flow.",
         `${plan.nodes.length} nodes${textCount > 0 ? ` (+${textCount} prompt text nodes)` : ""}, ${graph.edges.length} connections. Nothing was generated.`,
         ...(cost ? [cost] : []),
+        ...(timingLine(json) ? [timingLine(json)!] : []),
         ...listed,
         ...(plan.notes ?? []).map((n) => `Note: ${n}`),
         ...(validation?.warnings ?? []).map((w) => `Warning: ${w}`),
@@ -359,7 +370,7 @@ export default function FlowBuilderPanel() {
       setBusy(true);
       setStartedAt(p.startedAt);
       try {
-        const json = await pollJob(p.jobId, token);
+        const json = await pollJob(p.jobId, token, setProgress);
         savePending(null);
         if (p.kind === "edit") await applyEdit(json, token, p.refs ?? [], p.targets ?? []);
         else await applyBuild(json, token);
@@ -369,6 +380,7 @@ export default function FlowBuilderPanel() {
       } finally {
         setBusy(false);
         setStartedAt(null);
+        setProgress(null);
       }
     })();
   }, [spaceId, applyBuild, applyEdit, fail]);
@@ -394,6 +406,7 @@ export default function FlowBuilderPanel() {
           { mode: "edit", targets, rules, messages: [{ role: "user", content: text }] },
           token,
           (jobId) => savePending({ jobId, spaceId, kind: "edit", startedAt: t0, refs, targets }),
+          setProgress,
         );
         savePending(null);
         await applyEdit(json, token, refs, targets);
@@ -404,6 +417,7 @@ export default function FlowBuilderPanel() {
           { messages: next.filter((m) => !m.content.startsWith("[Editing ") && !m.edit).map(({ role, content }) => ({ role, content })), rules },
           token,
           (jobId) => savePending({ jobId, spaceId, kind: "build", startedAt: t0 }),
+          setProgress,
         );
         savePending(null);
         await applyBuild(json, token);
@@ -414,6 +428,7 @@ export default function FlowBuilderPanel() {
     } finally {
       setBusy(false);
       setStartedAt(null);
+      setProgress(null);
     }
   }, [input, busy, chat, rules, editing, attachedNodes, spaceId, setAuthModalOpen, applyEdit, applyBuild, fail]);
 
@@ -468,6 +483,11 @@ export default function FlowBuilderPanel() {
             <div className="text-xs text-amber-300 animate-pulse">
               {editing ? "Working on the selected nodes…" : "Planning the flow…"}
               {startedAt ? ` ${Math.max(0, Math.round((now - startedAt) / 1000))}s` : ""}
+              {progress && (progress.textChars > 0
+                ? ` · writing, ${progress.textChars.toLocaleString("en-US")} characters so far`
+                : progress.thinkingChars > 0
+                  ? ` · thinking (${progress.thinkingChars.toLocaleString("en-US")} characters)`
+                  : " · waiting for the AI to start")}
               <span className="block text-[10px] text-gray-500 mt-0.5">It keeps running on the server — you can refresh or leave and it will appear when done.</span>
             </div>
           )}

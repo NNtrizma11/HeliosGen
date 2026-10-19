@@ -17,44 +17,117 @@ class CapacityError extends Error {}
 
 const CAPACITY = /no_available_account|overloaded|rate.?limit|capacity|temporarily|try again/i;
 
-/** Read an Anthropic-style SSE stream (or a plain JSON reply) into text. */
-export async function readReply(res: Response): Promise<string> {
-  const raw = await res.text();
-  const trimmed = raw.trim();
+/** Where the time went on one call — logged and returned with the job result. */
+export interface ClaudeStats {
+  model: string;
+  /** Seconds until the HTTP response started */
+  firstByte: number;
+  /** Seconds until the first visible text */
+  firstText: number | null;
+  /** Total seconds */
+  total: number;
+  thinkingChars: number;
+  textChars: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+}
+
+type Progress = (p: { textChars: number; thinkingChars: number; seconds: number }) => void;
+
+/** Read an Anthropic-style SSE stream (or a plain JSON reply) into text, measuring as it goes. */
+export async function readReply(res: Response, t0 = Date.now(), onProgress?: Progress): Promise<{ text: string; stats: Omit<ClaudeStats, "model" | "firstByte"> }> {
   const fail = (msg: string) => { throw CAPACITY.test(msg) ? new CapacityError(msg) : new Error(msg); };
-  if (trimmed.startsWith("{")) {
+  const stats = { firstText: null as number | null, total: 0, thinkingChars: 0, textChars: 0, inputTokens: null as number | null, outputTokens: null as number | null };
+  const secs = () => Math.round((Date.now() - t0) / 100) / 10;
+  let text = "";
+  let raw = "";
+  let buf = "";
+  let lastReport = 0;
+
+  const handle = (line: string) => {
+    if (!line.startsWith("data:")) return;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]") return;
+    let p: {
+      type?: string;
+      delta?: { type?: string; text?: string; thinking?: string };
+      error?: { message?: string } | string;
+      message?: { usage?: { input_tokens?: number } };
+      usage?: { output_tokens?: number };
+    } | null = null;
+    try { p = JSON.parse(payload); } catch { return; }
+    if (p?.type === "content_block_delta") {
+      if (p.delta?.type === "text_delta") {
+        if (stats.firstText === null) stats.firstText = secs();
+        text += p.delta.text ?? "";
+        stats.textChars = text.length;
+      } else if (p.delta?.type === "thinking_delta") {
+        stats.thinkingChars += (p.delta.thinking ?? "").length;
+      }
+    } else if (p?.type === "message_start") {
+      stats.inputTokens = p.message?.usage?.input_tokens ?? null;
+    } else if (p?.type === "message_delta") {
+      stats.outputTokens = p.usage?.output_tokens ?? stats.outputTokens;
+    } else if (p?.type === "error") {
+      fail(typeof p.error === "string" ? p.error : p.error?.message ?? "Model error");
+    }
+  };
+
+  const reader = res.body?.getReader();
+  if (reader) {
+    const dec = new TextDecoder();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = dec.decode(value, { stream: true });
+      if (raw.length < 4000) raw += chunk;
+      buf += chunk;
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) >= 0) { handle(buf.slice(0, nl)); buf = buf.slice(nl + 1); }
+      if (onProgress && Date.now() - lastReport > 3000) {
+        lastReport = Date.now();
+        onProgress({ textChars: stats.textChars, thinkingChars: stats.thinkingChars, seconds: secs() });
+      }
+    }
+    if (buf) handle(buf);
+  } else {
+    raw = await res.text();
+    for (const line of raw.split("\n")) handle(line);
+  }
+  stats.total = secs();
+
+  // Non-streamed JSON reply
+  if (!text && raw.trim().startsWith("{")) {
     let j: Record<string, unknown> | null = null;
-    try { j = JSON.parse(trimmed); } catch { /* fall through to SSE parsing */ }
+    try { j = JSON.parse(raw.trim()); } catch { /* not JSON */ }
     if (j) {
       const blocks = (j.content ?? []) as Array<{ type: string; text?: string }>;
-      const text = blocks.filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
-      if (text) return text;
-      const err = j.error ?? j.msg ?? j.message;
-      if (err) fail(typeof err === "string" ? err : JSON.stringify(err));
+      text = blocks.filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
+      if (!text) {
+        const err = j.error ?? j.msg ?? j.message;
+        if (err) fail(typeof err === "string" ? err : JSON.stringify(err));
+      }
+      stats.textChars = text.length;
     }
   }
-  let text = "";
-  for (const line of raw.split("\n")) {
-    if (!line.startsWith("data:")) continue;
-    const payload = line.slice(5).trim();
-    if (!payload || payload === "[DONE]") continue;
-    let p: { type?: string; delta?: { type?: string; text?: string }; error?: { message?: string } | string } | null = null;
-    try { p = JSON.parse(payload); } catch { continue; }
-    if (p?.type === "content_block_delta" && p.delta?.type === "text_delta") text += p.delta.text ?? "";
-    else if (p?.type === "error") fail(typeof p.error === "string" ? p.error : p.error?.message ?? "Model error");
-  }
   if (!text && CAPACITY.test(raw)) throw new CapacityError(raw.slice(0, 200));
-  return text;
+  return { text, stats };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Send messages to Claude via Kie; retries capacity errors and falls back across CLAUDE_CHAIN. */
-export async function askClaude(apiKey: string, messages: ClaudeMsg[], maxTokens: number): Promise<{ text: string; model: string }> {
+export async function askClaude(
+  apiKey: string,
+  messages: ClaudeMsg[],
+  maxTokens: number,
+  onProgress?: Progress,
+): Promise<{ text: string; model: string; stats: ClaudeStats }> {
   let last = "";
   for (const model of CLAUDE_CHAIN) {
     for (let attempt = 0; attempt < 3; attempt++) {
       if (attempt) await sleep(attempt * 4000);
+      const t0 = Date.now();
       const res = await fetch(ENDPOINT, {
         method: "POST",
         cache: "no-store",
@@ -66,8 +139,12 @@ export async function askClaude(apiKey: string, messages: ClaudeMsg[], maxTokens
         if (res.status === 429 || res.status >= 500 || CAPACITY.test(t)) { last = `${model}: ${res.status} ${t}`; continue; }
         throw new Error(`Model request failed (${res.status}): ${t}`);
       }
+      const firstByte = Math.round((Date.now() - t0) / 100) / 10;
       try {
-        return { text: await readReply(res), model };
+        const { text, stats: st } = await readReply(res, t0, onProgress);
+        const stats: ClaudeStats = { model, firstByte, ...st };
+        console.log(`[kieClaude] ${model} first byte ${firstByte}s, first text ${st.firstText ?? "-"}s, total ${st.total}s, thinking ${st.thinkingChars} chars, text ${st.textChars} chars, tokens in ${st.inputTokens ?? "?"} / out ${st.outputTokens ?? "?"}`);
+        return { text, model, stats };
       } catch (e) {
         if (e instanceof CapacityError) { last = `${model}: ${e.message}`; continue; }
         throw e;
