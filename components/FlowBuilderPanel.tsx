@@ -47,6 +47,20 @@ function describe(n: PlanNode): string {
   return `${n.label ?? n.key} — ${parts.join(" · ")}`;
 }
 
+
+/** Read a builder response; a non-JSON body (proxy timeout, gateway page) becomes a readable error. */
+async function readJson(res: Response): Promise<Record<string, unknown>> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    const hint = /upstream|timeout|timed out|gateway/i.test(text) || res.status >= 500
+      ? "The AI took too long or the connection dropped. Try again, or ask for a smaller part of the workflow at a time."
+      : `Unexpected reply from the server (${res.status}).`;
+    return { error: hint };
+  }
+}
+
 export default function FlowBuilderPanel() {
   const insertFlow = useWorkflowStore((s) => s.insertFlow);
   const updateNodeData = useWorkflowStore((s) => s.updateNodeData);
@@ -130,7 +144,7 @@ export default function FlowBuilderPanel() {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ mode: "edit", targets, rules, messages: [{ role: "user", content: text }] }),
     });
-    const json = (await res.json()) as { edit?: EditPlan; validation?: { errors: string[]; warnings: string[] }; error?: string };
+    const json = (await readJson(res)) as { edit?: EditPlan; validation?: { errors: string[]; warnings: string[] }; error?: string };
     if (!res.ok || !json.edit) throw new Error(json.error ?? "The edit failed.");
 
     const { edit, validation } = json;
@@ -228,7 +242,7 @@ export default function FlowBuilderPanel() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ messages: next.filter((m) => !m.content.startsWith("[Editing ") && !m.edit).map(({ role, content }) => ({ role, content })), rules }),
       });
-      const json = (await res.json()) as { plan?: FlowPlan; validation?: ValidationResult; error?: string };
+      const json = (await readJson(res)) as { plan?: FlowPlan; validation?: ValidationResult; error?: string };
       if (!res.ok || !json.plan) throw new Error(json.error ?? "The builder failed.");
 
       const { plan, validation } = json;
