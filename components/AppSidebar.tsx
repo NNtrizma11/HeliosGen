@@ -31,6 +31,7 @@ import {
   ChevronDown,
   Wallet,
   Radar,
+  TrendingUp,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -845,6 +846,7 @@ export function AppSidebar() {
     { label: "Workflow", href: "/workflow", icon: Workflow, active: pathname === "/workflow" || (pathname.startsWith("/workflow/") && pathname !== "/workflow") },
     { label: "Assets", href: "#", icon: Package, active: false, disabled: true },
     { label: "Chat", href: "/chat", icon: MessageSquare, active: pathname === "/chat" },
+    { label: "Analytics", href: "/analytics", icon: TrendingUp, active: pathname === "/analytics" },
     { label: "Lab", href: "/lab", icon: Radar, active: pathname === "/lab" },
     { label: "Costs", href: "/costs", icon: Wallet, active: pathname === "/costs" },
     { label: "Settings", href: "#", icon: Settings, active: false, onClick: (e: React.MouseEvent) => { e.preventDefault(); if (user || process.env.NEXT_PUBLIC_GUEST_MODE === "true") setSettingsOpen(true); else setAuthModalOpen(true); } },
