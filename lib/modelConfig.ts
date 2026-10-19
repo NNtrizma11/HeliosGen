@@ -855,7 +855,7 @@ export const VIDEO_MODELS: VideoModel[] = [
     maxResources: 30,
     maxReferenceVideos: 10,
     maxReferenceAudios: 10,
-    resolutions: ["480p", "720p"],
+    resolutions: ["480p", "720p", "1080p"],
     defaultResolution: "720p",
     apiInput: {
       aspectRatioKey: "aspect_ratio",
@@ -878,8 +878,8 @@ export const VIDEO_MODELS: VideoModel[] = [
     apiId: "bytedance/seedance-2-5",
     name: "Seedance 2.5 Edit",
     provider: "Bytedance",
-    ratios: ["adaptive"],
-    durations: [],
+    ratios: ["adaptive", "9:16", "16:9", "1:1", "4:3", "3:4", "21:9"],
+    durations: [-1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
     defaultDuration: -1,
     defaultRatio: "adaptive",
     handles: ["prompt", "resource", "referenceVideo", "audioRef"],
@@ -888,7 +888,7 @@ export const VIDEO_MODELS: VideoModel[] = [
     maxResources: 30,
     maxReferenceVideos: 10,
     maxReferenceAudios: 10,
-    resolutions: ["480p", "720p"],
+    resolutions: ["480p", "720p", "1080p"],
     defaultResolution: "720p",
     apiInput: {
       aspectRatioKey: "aspect_ratio",
