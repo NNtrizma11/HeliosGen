@@ -63,7 +63,7 @@ export const STARTER_PRICES: Record<string, number> = {
   "vid:kling-3.0:pro:sound": 23,
   "vid:kling-3.0:4K:silent": 67,
   "vid:kling-3.0:4K:sound": 67,
-  "img:nano-banana-2:basic": 8,
+  "img:nano-banana-2:1k": 8,
 };
 
 export interface Estimate {

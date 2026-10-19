@@ -555,6 +555,14 @@ export async function POST(req: NextRequest) {
       kieImageUrls = await ensureKieReachableImages(r2ImageUrls, kieToken);
     }
 
+    // GPT Image 2: some aspect ratios exist only at lower resolutions (Kie docs)
+    if (cfg.id === "gpt-image-2") {
+      const blocked: Record<string, string[]> = { "2k": ["5:4", "4:5", "3:1", "1:3", "9:21"], "4k": ["3:1", "1:3", "9:21"] };
+      if (blocked[String(quality)]?.includes(String(aspectRatio))) {
+        return NextResponse.json({ error: `GPT Image 2 can't do ${aspectRatio} at ${String(quality).toUpperCase()}. Pick another aspect ratio or a lower resolution.` }, { status: 400 });
+      }
+    }
+
     const input: Record<string, unknown> = {
       prompt:                    prompt.slice(0, apiInput.promptMaxLength),
       [apiInput.aspectRatioKey]: aspectRatio,
