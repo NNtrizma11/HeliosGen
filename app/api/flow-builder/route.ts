@@ -7,6 +7,12 @@
  * Body: { messages: { role: "user" | "assistant"; content: string }[], rules?: string,
  *         mode?: "edit", targets?: EditTarget[] }
  * Returns: { plan, validation } — or in edit mode { edit, validation } — or { error }
+ *
+ * The model call can run for several minutes on big workflows. Browsers and the
+ * proxy drop a request that sends nothing for ~5 minutes ("upstream error"), so the
+ * response starts immediately and sends a space every 10 s while the model works;
+ * the JSON follows at the end (leading whitespace is valid JSON). Errors from that
+ * phase are reported as { error } in the body, since the status is already sent.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getKieToken } from "@/lib/getKieToken";
@@ -14,7 +20,7 @@ import { FLOW_BUILDER_RULES, catalogText, extractJson, validatePlan, type FlowPl
 import { NODE_EDIT_RULES, validateEdit, type EditPlan, type EditTarget } from "@/lib/nodeEdit";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 800;
 
 const MODEL = "claude-sonnet-4-6";
 const ENDPOINT = "https://api.kie.ai/claude/v1/messages";
@@ -52,6 +58,29 @@ async function readReply(res: Response): Promise<string> {
   return text;
 }
 
+/** Stream the response: headers now, a space every 10 s, then the JSON result. */
+function keepAlive(work: () => Promise<object>): Response {
+  const enc = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const beat = setInterval(() => { try { controller.enqueue(enc.encode(" ")); } catch { /* closed */ } }, 10_000);
+      let result: object;
+      try {
+        result = await work();
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("[flow-builder]", msg);
+        result = { error: msg };
+      }
+      clearInterval(beat);
+      try { controller.enqueue(enc.encode(JSON.stringify(result))); controller.close(); } catch { /* client left */ }
+    },
+  });
+  return new Response(stream, {
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Accel-Buffering": "no" },
+  });
+}
+
 export async function POST(req: NextRequest) {
   try {
     const apiKey = await getKieToken(req);
@@ -81,6 +110,7 @@ export async function POST(req: NextRequest) {
       ...history,
     ];
 
+    return keepAlive(async () => {
     const upstream = await fetch(ENDPOINT, {
       method: "POST",
       cache: "no-store",
@@ -89,7 +119,7 @@ export async function POST(req: NextRequest) {
     });
     if (!upstream.ok) {
       const t = await upstream.text();
-      return NextResponse.json({ error: `Model request failed (${upstream.status}): ${t.slice(0, 300)}` }, { status: 502 });
+      return { error: `Model request failed (${upstream.status}): ${t.slice(0, 300)}` };
     }
 
     const reply = await readReply(upstream);
@@ -99,25 +129,26 @@ export async function POST(req: NextRequest) {
       try {
         edit = extractJson(reply) as EditPlan;
       } catch {
-        return NextResponse.json({ error: "The model did not return a usable edit. Try again or rephrase.", raw: reply.slice(0, 2000) }, { status: 502 });
+        return { error: "The model did not return a usable edit. Try again or rephrase.", raw: reply.slice(0, 2000) };
       }
       edit.changes ??= [];
       edit.delete ??= [];
       if (edit.add) { edit.add.nodes ??= []; edit.add.edges ??= []; }
-      return NextResponse.json({ edit, validation: validateEdit(body.targets!, edit) });
+      return { edit, validation: validateEdit(body.targets!, edit) };
     }
 
     let plan: FlowPlan;
     try {
       plan = extractJson(reply) as FlowPlan;
     } catch {
-      return NextResponse.json({ error: "The model did not return a usable plan. Try again or rephrase.", raw: reply.slice(0, 2000) }, { status: 502 });
+      return { error: "The model did not return a usable plan. Try again or rephrase.", raw: reply.slice(0, 2000) };
     }
     plan.nodes ??= [];
     plan.edges ??= [];
 
     const validation = validatePlan(plan);
-    return NextResponse.json({ plan, validation });
+    return { plan, validation };
+    });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[flow-builder]", msg);
