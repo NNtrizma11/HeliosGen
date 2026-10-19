@@ -109,6 +109,11 @@ export interface Space {
   updatedAt?: number;
   viewport?: { x: number; y: number; zoom: number };
   isPublic?: boolean;
+  /** Set when this canvas belongs to a teammate: it is saved via /api/team/space, never as your own. */
+  ownerId?: string;
+  ownerEmail?: string;
+  /** updatedAt when a teammate's canvas was loaded (unchanged canvases aren't saved back) */
+  loadedAt?: number;
 }
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -195,6 +200,8 @@ interface WorkflowStore {
   deleteSpace:    (id: string)   => void;
   duplicateSpace: (id: string)   => void;
   setSpacePublic: (id: string, isPublic: boolean) => void;
+  /** Add or replace a canvas loaded from the server (own or a teammate's). */
+  upsertSpace:    (space: Space) => void;
 
   // ── Workflow actions
   onNodesChange:      (changes: NodeChange[]) => void;
@@ -384,6 +391,14 @@ export const useWorkflowStore = create<WorkflowStore>()(
           set((s) => ({
             spaces: s.spaces.map((sp) => (sp.id === id ? { ...sp, isPublic } : sp)),
           })),
+
+        upsertSpace: (space) =>
+          set((s) => {
+            const exists = s.spaces.some((sp) => sp.id === space.id);
+            const spaces = exists ? s.spaces.map((sp) => (sp.id === space.id ? space : sp)) : [...s.spaces, space];
+            if (s.activeSpaceId !== space.id) return { spaces };
+            return { spaces, nodes: space.nodes, edges: space.edges, nodeCounters: space.nodeCounters };
+          }),
 
         // ── Workflow actions (each syncs back to spaces) ────────────────────
 

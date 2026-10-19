@@ -259,6 +259,12 @@ function collectMedia(space: Space): MediaItem[] {
   return items;
 }
 
+interface TeamSpace {
+  id: string; name: string; ownerEmail: string; createdAt: number; updatedAt: number;
+  media: { type: "image" | "video"; url: string }[];
+}
+
+
 // ── 4-cell thumbnail mosaic ───────────────────────────────────────────────────
 
 function ThumbnailMosaic({ space }: { space: Space }) {
@@ -628,6 +634,21 @@ export default function WorkflowDashboard() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Teammates' canvases (shown in their own section)
+  const [teamSpaces, setTeamSpaces] = useState<TeamSpace[]>([]);
+  useEffect(() => {
+    if (!user || process.env.NEXT_PUBLIC_GUEST_MODE === "true") return;
+    (async () => {
+      const { data } = await createClient().auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) return;
+      const res = await fetch("/api/team/spaces", { headers: { Authorization: `Bearer ${token}` } }).catch(() => null);
+      if (!res?.ok) return;
+      const j = (await res.json()) as { spaces?: TeamSpace[] };
+      setTeamSpaces((j.spaces ?? []).sort((a, b) => b.updatedAt - a.updatedAt));
+    })();
+  }, [user]);
+
   const openSpace = (id: string) => {
     switchSpace(id);
     router.push(`/workflow/${id}`);
@@ -662,7 +683,7 @@ export default function WorkflowDashboard() {
 
   const sorted = user
     ? [...spaces]
-        .filter((sp) => sp.nodes.length > 0 && sp.name !== TEMPLATE_NAME)
+        .filter((sp) => sp.nodes.length > 0 && sp.name !== TEMPLATE_NAME && !sp.ownerId)
         .sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt))
     : [];
 
@@ -742,6 +763,37 @@ export default function WorkflowDashboard() {
             <SpaceCard key={sp.id} space={sp} onOpen={() => openSpace(sp.id)} />
           ))}
         </section>
+
+        {user && teamSpaces.length > 0 && (
+          <>
+            <section style={{ padding: "40px 32px 16px" }}>
+              <h2 style={{ margin: 0, fontSize: "20px", fontWeight: 600, color: "#ffffff", letterSpacing: "-0.01em" }}>
+                Shared by your team
+              </h2>
+              <div style={{ marginTop: "8px", fontFamily: "var(--font-geist-mono), monospace", fontSize: "11px", color: "rgba(255,255,255,0.4)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                {teamSpaces.length} workspace{teamSpaces.length !== 1 ? "s" : ""} · open and edit
+              </div>
+            </section>
+            <section className="wsd-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "18px", padding: "0 32px" }}>
+              {teamSpaces.map((t) => (
+                <article key={t.id} className="wsd-card" onClick={() => router.push(`/workflow/${t.id}`)}>
+                  <ThumbnailMosaic space={{
+                    id: t.id, name: t.name, edges: [], nodeCounters: {}, createdAt: t.createdAt,
+                    nodes: t.media.map((m, i) => ({ id: `m${i}`, position: { x: 0, y: 0 }, data: m.type === "video" ? { videoUrl: m.url } : { r2Url: m.url } })),
+                  } as unknown as Space} />
+                  <div className="wsd-foot">
+                    <div className="wsd-foot-row">
+                      <span style={{ fontSize: "16px", fontWeight: 600, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</span>
+                    </div>
+                    <div style={{ marginTop: "6px", fontFamily: "var(--font-geist-mono), monospace", fontSize: "11px", color: "rgba(255,255,255,0.4)", letterSpacing: "0.04em" }}>
+                      {t.ownerEmail} · {timeAgo(new Date(t.updatedAt))}
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </section>
+          </>
+        )}
 
       </div>
     </div>
