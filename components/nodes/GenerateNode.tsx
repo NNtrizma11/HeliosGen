@@ -810,6 +810,15 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
     onNodesChange([id, ...newIds].map((nid) => ({ type: "select" as const, id: nid, selected: true })));
   }, [generate, genCount, id, addNode, insertEdge, onNodesChange]);
 
+  // The settings panel asks the node to generate via a window event
+  const handleGenerateBatchRef = useRef(handleGenerateBatch);
+  handleGenerateBatchRef.current = handleGenerateBatch;
+  useEffect(() => {
+    const onReq = (e: Event) => { if ((e as CustomEvent<{ id: string }>).detail?.id === id) handleGenerateBatchRef.current(); };
+    window.addEventListener("helios:generate", onReq);
+    return () => window.removeEventListener("helios:generate", onReq);
+  }, [id]);
+
   // Pipeline runner trigger — called by Run Pipeline button
   const generateRef = useRef(generate);
   useEffect(() => { generateRef.current = generate; }, [generate]);
@@ -1459,7 +1468,7 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
       {generations.length > 1 && (
         <div
           className="absolute left-0 right-0 flex items-center justify-center gap-1.5"
-          style={{ top: "calc(100% + 16px)" }}
+          style={{ top: "calc(100% + 12px)" }}
           onMouseDown={(e) => e.stopPropagation()}
         >
           <button
@@ -1470,17 +1479,30 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
           </button>
-          {generations.length <= 8 ? generations.map((_, i) => (
-            <button
-              key={i}
-              onClick={(e) => { e.stopPropagation(); goToGen(i); }}
-              className={`rounded-full transition-all ${i === currentGenIdx ? "w-3 h-1.5 bg-white" : "w-1.5 h-1.5 bg-white/30 hover:bg-white/60"}`}
-            />
-          )) : (
-            <span className="text-[10px] text-white/50 font-mono tabular-nums">
-              {currentGenIdx + 1} / {generations.length}
-            </span>
-          )}
+          <div className="flex items-center gap-1.5 overflow-x-auto max-w-[calc(100%-72px)] px-1 py-1 nowheel" style={{ scrollbarWidth: "none" }}>
+            {generations.map((entry, i) => {
+              const active = i === currentGenIdx;
+              return (
+                <button
+                  key={i}
+                  title={`Generation ${i + 1}${entry === null ? " (generating)" : typeof entry === "object" ? " (failed)" : ""}`}
+                  onClick={(e) => { e.stopPropagation(); goToGen(i); }}
+                  className={`relative shrink-0 w-9 h-9 rounded-full overflow-hidden bg-[#1a1d24] transition-all ${active ? "ring-2 ring-teal-300 ring-offset-2 ring-offset-[#0B0E14] scale-110" : "ring-1 ring-white/15 opacity-75 hover:opacity-100"}`}
+                >
+                  {typeof entry === "string" && entry ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={entry} alt="" loading="lazy" className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
+                  ) : entry === null ? (
+                    <span className="absolute inset-0 flex items-center justify-center">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="2.5" style={{ animation: "spin 0.9s linear infinite" }}><path d="M21 12a9 9 0 1 1-6.2-8.56" strokeLinecap="round" /></svg>
+                    </span>
+                  ) : (
+                    <span className="absolute inset-0 flex items-center justify-center text-[13px] font-bold text-red-300">!</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
           <button
             onClick={(e) => { e.stopPropagation(); goToGen(currentGenIdx + 1); }}
             disabled={currentGenIdx === generations.length - 1}

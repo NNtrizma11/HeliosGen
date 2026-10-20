@@ -182,6 +182,8 @@ export default function FlowBuilderPanel() {
   const editing = attachedNodes.length > 0;
 
   const [open, setOpen] = useState(false);
+  const setBuilderOpen = useWorkflowStore((s) => s.setBuilderOpen);
+  useEffect(() => { setBuilderOpen(open); return () => setBuilderOpen(false); }, [open, setBuilderOpen]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [chat, setChat] = useState<ChatEntry[]>([]);
