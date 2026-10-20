@@ -12,6 +12,7 @@
  * REFRESH_DAYS (Meta keeps revising recent days as conversions attribute).
  */
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { GUEST_USER_ID } from "@/lib/guestMode";
 
 export const GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v23.0";
 const GRAPH = `https://graph.facebook.com/${GRAPH_VERSION}`;
@@ -60,9 +61,49 @@ async function graphAll(path: string, token: string, params: Record<string, stri
  * that connection's token, falling back to any other connection that can still see the account.
  */
 
-export async function listConnections() {
-  const { data } = await supabaseAdmin.from("meta_connections")
+/* ── Visibility ─────────────────────────────────────────────────────────────
+ * Meta data belongs to whoever connected it: a HeliosGen user sees connections made by
+ * themselves or by members of their team, and only the ad accounts / ads / insights behind them.
+ * `null` means "everything" (guest mode is single-user).
+ */
+
+async function visibleOwners(userId: string): Promise<string[] | null> {
+  if (userId === GUEST_USER_ID) return null;
+  const { data: mine } = await supabaseAdmin.from("team_members").select("team_id").eq("user_id", userId);
+  const teams = [...new Set((mine ?? []).map((r: { team_id: string }) => r.team_id))];
+  if (!teams.length) return [userId];
+  const { data } = await supabaseAdmin.from("team_members").select("user_id").in("team_id", teams).not("user_id", "is", null);
+  return [...new Set([userId, ...(data ?? []).map((r: { user_id: string }) => r.user_id)])];
+}
+
+export async function visibleConnectionIds(userId: string): Promise<number[] | null> {
+  const owners = await visibleOwners(userId);
+  if (!owners) return null;
+  const { data } = await supabaseAdmin.from("meta_connections").select("id").in("connected_by", owners);
+  return (data ?? []).map((c) => c.id as number);
+}
+
+/** Ad account IDs this user may see (null = all). */
+export async function visibleAccountIds(userId: string): Promise<string[] | null> {
+  const conns = await visibleConnectionIds(userId);
+  if (!conns) return null;
+  if (!conns.length) return [];
+  const { data } = await supabaseAdmin.from("meta_ad_accounts").select("account_id").in("connection_id", conns);
+  return (data ?? []).map((a) => a.account_id as string);
+}
+
+export async function canSeeAccount(userId: string, accountId: string): Promise<boolean> {
+  const ids = await visibleAccountIds(userId);
+  return ids === null || ids.includes(accountId);
+}
+
+export async function listConnections(userId: string) {
+  const conns = await visibleConnectionIds(userId);
+  if (conns && !conns.length) return [];
+  let q = supabaseAdmin.from("meta_connections")
     .select("id, token_type, meta_user_id, meta_user_name, expires_at, last_error, created_at").order("id");
+  if (conns) q = q.in("id", conns);
+  const { data } = await q;
   return data ?? [];
 }
 
@@ -70,9 +111,12 @@ export async function listConnections() {
 async function tokensFor(accountId: string): Promise<{ id: number; token: string }[]> {
   const [{ data: acc }, { data: all }] = await Promise.all([
     supabaseAdmin.from("meta_ad_accounts").select("connection_id").eq("account_id", accountId).maybeSingle(),
-    supabaseAdmin.from("meta_connections").select("id, access_token").order("id", { ascending: false }),
+    supabaseAdmin.from("meta_connections").select("id, access_token, connected_by").order("id", { ascending: false }),
   ]);
-  const list = (all ?? []).map((c) => ({ id: c.id as number, token: c.access_token as string }));
+  // Fallback tokens only come from connections made by the same HeliosGen user, never another user's.
+  const owner = (all ?? []).find((c) => c.id === acc?.connection_id)?.connected_by ?? null;
+  const list = (all ?? []).filter((c) => c.id === acc?.connection_id || (owner !== null && c.connected_by === owner))
+    .map((c) => ({ id: c.id as number, token: c.access_token as string }));
   return list.sort((x, y) => Number(y.id === acc?.connection_id) - Number(x.id === acc?.connection_id));
 }
 
@@ -306,8 +350,12 @@ export async function syncAccount(accountId: string, opts: { full?: boolean } = 
   throw lastError;
 }
 
-export async function syncAll() {
-  const { data } = await supabaseAdmin.from("meta_ad_accounts").select("account_id").eq("sync_enabled", true);
+/** Sync every enabled account, or only those in `onlyIds` when given (a signed-in user's own). */
+export async function syncAll(onlyIds: string[] | null = null) {
+  if (onlyIds && !onlyIds.length) return [];
+  let q = supabaseAdmin.from("meta_ad_accounts").select("account_id").eq("sync_enabled", true);
+  if (onlyIds) q = q.in("account_id", onlyIds);
+  const { data } = await q;
   const results: unknown[] = [];
   for (const a of data ?? []) {
     try { results.push(await syncAccount(a.account_id as string)); }

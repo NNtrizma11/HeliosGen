@@ -8,16 +8,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { resolveUserId } from "@/lib/guestMode";
-import { connectToken, listConnections, removeConnection } from "@/lib/meta";
+import { canSeeAccount, connectToken, listConnections, removeConnection, visibleAccountIds, visibleConnectionIds } from "@/lib/meta";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  if (!(await resolveUserId(req))) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const [connections, { data: accounts }] = await Promise.all([
-    listConnections(),
-    supabaseAdmin.from("meta_ad_accounts").select("*").order("name"),
-  ]);
+  const userId = await resolveUserId(req);
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const ids = await visibleAccountIds(userId);
+  let accQ = supabaseAdmin.from("meta_ad_accounts").select("*").order("name");
+  if (ids) accQ = accQ.in("account_id", ids.length ? ids : ["-"]);
+  const [connections, { data: accounts }] = await Promise.all([listConnections(userId), accQ]);
   return NextResponse.json({
     connected: connections.length > 0,
     connections,
@@ -41,9 +42,11 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  if (!(await resolveUserId(req))) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const userId = await resolveUserId(req);
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = await req.json().catch(() => ({}));
   const id = String(body.account_id ?? "");
+  if (id && !(await canSeeAccount(userId, id))) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const patch: Record<string, unknown> = {};
   if (typeof body.sync_enabled === "boolean") patch.sync_enabled = body.sync_enabled;
   if (typeof body.market === "string") patch.market = body.market.toUpperCase().slice(0, 4) || null;
@@ -54,9 +57,12 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  if (!(await resolveUserId(req))) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const userId = await resolveUserId(req);
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const id = Number(req.nextUrl.searchParams.get("id"));
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
+  const conns = await visibleConnectionIds(userId);
+  if (conns && !conns.includes(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
   await removeConnection(id);
   return NextResponse.json({ ok: true });
 }
