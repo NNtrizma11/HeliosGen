@@ -17,6 +17,30 @@ import { uploadBuffer } from "@/lib/r2";
 import { resolveUserId } from "@/lib/guestMode";
 
 const run = promisify(execFile);
+
+/**
+ * Runs ffmpeg quietly with a hard timeout. Quiet logging keeps stderr small,
+ * so the real error is readable instead of being buried under (or cut off by)
+ * banner and progress output, and a hung process is killed rather than left
+ * running until the request dies with no explanation.
+ */
+async function ffmpeg(args: string[], timeoutMs = 240_000) {
+  try {
+    return await run("ffmpeg", ["-hide_banner", "-nostats", "-loglevel", "error", ...args], {
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: timeoutMs,
+      killSignal: "SIGKILL",
+    });
+  } catch (e: unknown) {
+    const err = e as { killed?: boolean; signal?: string | null; code?: number | string; stderr?: string };
+    const reason = err.killed || err.signal
+      ? `ffmpeg was stopped (${err.signal ?? "killed"}${err.killed ? ", timed out or out of memory" : ""})`
+      : `ffmpeg exited with code ${err.code}`;
+    const detail = (err.stderr ?? "").trim().split("\n").slice(-6).join(" | ");
+    throw new Error(detail ? `${reason}: ${detail}` : reason);
+  }
+}
+
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
@@ -87,16 +111,22 @@ export async function POST(req: NextRequest) {
       const info = await probe(inputs[i]);
       const out = join(dir, `part${i}.mp4`);
       const useOwnAudio = keepClipAudio && info.hasAudio;
-      await run("ffmpeg", [
+      // Bound the silent track to the clip's own length. An endless anullsrc
+      // relying on -shortest to stop can keep ffmpeg 7 running indefinitely
+      // when the video goes through -filter_complex (this was the "Stitching
+      // failed" with no error message). -t on the output is a second guard.
+      const dur = info.duration > 0 ? info.duration.toFixed(3) : null;
+      await ffmpeg([
         "-y", "-i", inputs[i],
-        "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+        "-f", "lavfi", ...(dur ? ["-t", dur] : []), "-i", "anullsrc=r=48000:cl=stereo",
         "-filter_complex",
         `[0:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p[v]`,
         "-map", "[v]", "-map", useOwnAudio ? "0:a:0" : "1:a:0",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-threads", "4",
         "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "160k",
+        ...(dur ? ["-t", dur] : []),
         "-shortest", out,
-      ], { maxBuffer: 16 * 1024 * 1024 });
+      ]);
       parts.push(out);
     }
 
@@ -104,7 +134,7 @@ export async function POST(req: NextRequest) {
     const list = join(dir, "list.txt");
     await writeFile(list, parts.map((p) => `file '${p}'`).join("\n"));
     const joined = join(dir, "joined.mp4");
-    await run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", list, "-c", "copy", "-movflags", "+faststart", joined]);
+    await ffmpeg(["-y", "-f", "concat", "-safe", "0", "-i", list, "-c", "copy", "-movflags", "+faststart", joined]);
     const joinedInfo = await probe(joined);
 
     // 4. Voiceover
@@ -121,14 +151,14 @@ export async function POST(req: NextRequest) {
       const filter = keepClipAudio
         ? "[0:a]volume=0.25[a0];[1:a]apad[a1];[a0][a1]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]"
         : "[1:a]apad[a]";
-      await run("ffmpeg", [
+      await ffmpeg([
         "-y", "-i", joined, "-i", vo,
         "-filter_complex", filter,
         "-map", "0:v", "-map", "[a]",
         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
         "-t", String(joinedInfo.duration),
         "-movflags", "+faststart", finalPath,
-      ], { maxBuffer: 16 * 1024 * 1024 });
+      ]);
     }
 
     const buffer = await readFile(finalPath);

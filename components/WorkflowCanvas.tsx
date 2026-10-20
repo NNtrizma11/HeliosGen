@@ -22,7 +22,7 @@ import { requestWorkflowSync } from "@/lib/workflowSyncBus";
 import { VIDEO_MODELS } from "@/lib/modelConfig";
 import CuttableEdge from "@/components/edges/CuttableEdge";
 import { topoSort, resolveInputs } from "@/lib/executor";
-import { NODE_SIZE, FALLBACK_SIZE, getLastNodeSettings, getDefaultNodeSize } from "@/lib/nodeTypes";
+import { NODES, NODE_META, NODE_SIZE, FALLBACK_SIZE, getLastNodeSettings, getDefaultNodeSize } from "@/lib/nodeTypes";
 import { edgeStyle } from "@/lib/edgeStyles";
 import { createClient } from "@/lib/supabase/client";
 import { sha256Hex } from "@/lib/assetHash";
@@ -44,6 +44,7 @@ import NodePickerMenu, { DropState } from "./NodePickerMenu";
 import SelectionToolbar from "./SelectionToolbar";
 import CanvasToolbar from "./CanvasToolbar";
 import AddNodeMenu from "./AddNodeMenu";
+import CanvasContextMenu, { type MenuEntry, mod } from "./CanvasContextMenu";
 import ShareModal from "./ShareModal";
 import { MessageSquare, Sparkles, Clapperboard } from "lucide-react";
 
@@ -82,6 +83,7 @@ const edgeTypes = {
 };
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const isMacPlatform = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
 const SNAP_THRESHOLD = 8; // canvas units
 
@@ -106,6 +108,30 @@ function ViewportSyncer() {
   }, [activeSpaceId]);
 
   return null;
+}
+
+/** Hands the React Flow instance to WorkflowCanvas (which renders <ReactFlow> itself). */
+function FlowInstanceBridge({ instanceRef }: { instanceRef: React.MutableRefObject<ReturnType<typeof useReactFlow> | null> }) {
+  const rf = useReactFlow();
+  useEffect(() => { instanceRef.current = rf; }, [rf, instanceRef]);
+  return null;
+}
+
+/** Nodes that don't draw their own lock overlay get a small badge from CSS. */
+const DRAWS_OWN_LOCK = new Set(["generateNode", "videoGeneratorNode", "voiceNode", "groupNode"]);
+function lockBadgeClass(n: Node<NodeData>): string | null {
+  return n.data?.locked && !DRAWS_OWN_LOCK.has(n.type ?? "") ? "node-locked-badge" : null;
+}
+
+/** First media URL a node holds (shown output or uploaded input), for "Copy link". */
+function nodeMediaUrl(n: Node<NodeData> | undefined): string | undefined {
+  if (!n) return undefined;
+  const d = n.data as Record<string, unknown>;
+  for (const k of ["videoUrl", "imageUrl", "audioUrl", "r2Url", "inputVideo", "inputImage"]) {
+    const v = d[k];
+    if (typeof v === "string" && /^https?:\/\//.test(v)) return v;
+  }
+  return undefined;
 }
 
 /** Dashed group-preview outline shown when selecting a non-grouped node.
@@ -812,6 +838,178 @@ export default function WorkflowCanvas() {
     return () => document.removeEventListener("keydown", onKey);
   }, [handleCopy, handlePaste, handleUndo, handleRedo, addNode, insertEdge]);
 
+  // ── Context menu + node commands (duplicate, lock, layer order) ──────────────
+  const rfRef = useRef<ReturnType<typeof useReactFlow> | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; nodeId: string | null } | null>(null);
+  const closeCtxMenu = useCallback(() => setCtxMenu(null), []);
+
+  /** Selected nodes, plus the members of any selected group. */
+  const selectionWithMembers = useCallback(() => {
+    const all = useWorkflowStore.getState().nodes;
+    const ids = new Set(all.filter((n) => n.selected).map((n) => n.id));
+    for (const n of all) {
+      if (ids.has(n.id) && n.type === "groupNode") ((n.data?.memberIds as string[] | undefined) ?? []).forEach((m) => ids.add(m));
+    }
+    return { all, ids };
+  }, []);
+
+  const duplicateSelection = useCallback(() => {
+    const { all, ids } = selectionWithMembers();
+    if (ids.size === 0) return;
+    const curEdges = useWorkflowStore.getState().edges;
+    const idMap = new Map<string, string>();
+    const picked = all.filter((n) => ids.has(n.id));
+    picked.forEach((n) => idMap.set(n.id, `${n.type}-${uid()}`));
+    onNodesChange(all.filter((n) => n.selected).map((n) => ({ type: "select" as const, id: n.id, selected: false })));
+    for (const n of picked) {
+      const data: NodeData = { ...n.data, status: n.data.status === "running" ? "idle" : n.data.status, locked: false };
+      if (n.type === "groupNode") data.memberIds = ((n.data.memberIds as string[] | undefined) ?? []).map((m) => idMap.get(m) ?? m);
+      addNode({ ...n, id: idMap.get(n.id)!, selected: true, position: { x: n.position.x + 40, y: n.position.y + 40 }, data });
+    }
+    for (const e of curEdges) {
+      const src = idMap.get(e.source), tgt = idMap.get(e.target);
+      if (src && tgt) insertEdge({ ...e, id: `edge-${uid()}`, source: src, target: tgt });
+    }
+  }, [selectionWithMembers, onNodesChange, addNode, insertEdge]);
+
+  const deleteSelection = useCallback(() => {
+    const { all, ids } = selectionWithMembers();
+    const removable = all.filter((n) => ids.has(n.id) && n.deletable !== false && !n.data?.locked);
+    if (removable.length) onNodesChange(removable.map((n) => ({ type: "remove" as const, id: n.id })));
+  }, [selectionWithMembers, onNodesChange]);
+
+  /** Lock or unlock the selection (a group locks together with its members). */
+  const setSelectionLocked = useCallback((locked: boolean) => {
+    const { ids } = selectionWithMembers();
+    pushUndoSnapshot();
+    ids.forEach((id) => updateNodeData(id, { locked }));
+    requestWorkflowSync();
+  }, [selectionWithMembers, pushUndoSnapshot, updateNodeData]);
+
+  const unlockAll = useCallback(() => {
+    const locked = useWorkflowStore.getState().nodes.filter((n) => n.data?.locked);
+    if (!locked.length) return;
+    pushUndoSnapshot();
+    locked.forEach((n) => updateNodeData(n.id, { locked: false }));
+    requestWorkflowSync();
+  }, [pushUndoSnapshot, updateNodeData]);
+
+  /** Bring to front / send to back, stored on the node so it persists. */
+  const reorderSelection = useCallback((where: "front" | "back") => {
+    const { all, ids } = selectionWithMembers();
+    if (!ids.size) return;
+    const orders = all.filter((n) => n.type !== "groupNode").map((n) => (n.data?.zOrder as number | undefined) ?? 0);
+    const next = where === "front" ? Math.max(0, ...orders) + 1 : Math.min(0, ...orders) - 1;
+    all.filter((n) => ids.has(n.id) && n.type !== "groupNode").forEach((n) => updateNodeData(n.id, { zOrder: next }));
+    requestWorkflowSync();
+  }, [selectionWithMembers, updateNodeData]);
+
+  const selectAll = useCallback(() => {
+    onNodesChange(useWorkflowStore.getState().nodes.map((n) => ({ type: "select" as const, id: n.id, selected: true })));
+  }, [onNodesChange]);
+
+  /** Add a node with its top-left at a screen point (right-click → Add node). */
+  const addNodeAtScreen = useCallback((type: string, sx: number, sy: number) => {
+    const rect = wrapperRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const { x: panX, y: panY, zoom } = viewportRef.current;
+    const state = useWorkflowStore.getState();
+    const size = getDefaultNodeSize(type, state.lastNodeSize);
+    addNode({
+      id: `${type}-${uid()}`,
+      type,
+      position: { x: (sx - rect.left - panX) / zoom, y: (sy - rect.top - panY) / zoom },
+      style: type === "imageInputNode" || type === "videoInputNode" ? { width: size.w } : { width: size.w, height: size.h },
+      data: { label: nodeLabel(type, state.nodes), status: "idle", ...getLastNodeSettings(type, state.nodes) },
+    });
+  }, [addNode]);
+
+  const onNodeContextMenu = useCallback((e: React.MouseEvent, node: Node) => {
+    e.preventDefault();
+    // Right-clicking outside the current selection acts on that node alone
+    if (!node.selected) {
+      const all = useWorkflowStore.getState().nodes;
+      onNodesChange(all.map((n) => ({ type: "select" as const, id: n.id, selected: n.id === node.id })));
+    }
+    setCtxMenu({ x: e.clientX, y: e.clientY, nodeId: node.id });
+  }, [onNodesChange]);
+
+  const onSelectionContextMenu = useCallback((e: React.MouseEvent, sel: Node[]) => {
+    e.preventDefault();
+    setCtxMenu({ x: e.clientX, y: e.clientY, nodeId: sel[0]?.id ?? null });
+  }, []);
+
+  const onPaneContextMenu = useCallback((e: MouseEvent | React.MouseEvent) => {
+    e.preventDefault();
+    setCtxMenu({ x: e.clientX, y: e.clientY, nodeId: null });
+  }, []);
+
+  const ctxItems = useMemo<MenuEntry[]>(() => {
+    if (!ctxMenu) return [];
+    const pasteHere = () => { mousePosRef.current = { x: ctxMenu.x, y: ctxMenu.y }; handlePaste(); };
+    if (ctxMenu.nodeId) {
+      const node = nodes.find((n) => n.id === ctxMenu.nodeId);
+      const selectedCount = nodes.filter((n) => n.selected).length || 1;
+      const locked = !!node?.data?.locked;
+      const url = selectedCount === 1 ? nodeMediaUrl(node) : undefined;
+      return [
+        { label: selectedCount > 1 ? `Copy ${selectedCount} nodes` : "Copy", shortcut: mod("C"), onClick: handleCopy },
+        { label: "Paste", shortcut: mod("V"), onClick: pasteHere, disabled: !clipboardRef.current },
+        { label: "Duplicate", shortcut: mod("D"), onClick: duplicateSelection },
+        ...(url ? [{ label: "Copy link to media", onClick: () => { navigator.clipboard.writeText(url).catch(() => {}); } }] : []),
+        "divider",
+        { label: "Bring to front", shortcut: "]", onClick: () => reorderSelection("front") },
+        { label: "Send to back", shortcut: "[", onClick: () => reorderSelection("back") },
+        "divider",
+        { label: locked ? "Unlock" : "Lock", shortcut: mod("L", true), onClick: () => setSelectionLocked(!locked) },
+        "divider",
+        { label: selectedCount > 1 ? `Delete ${selectedCount} nodes` : "Delete", shortcut: "⌫", danger: true, disabled: locked, onClick: deleteSelection },
+      ];
+    }
+    const anyLocked = nodes.some((n) => n.data?.locked);
+    return [
+      { label: "Paste", shortcut: mod("V"), onClick: pasteHere, disabled: !clipboardRef.current },
+      {
+        label: "Add node",
+        submenu: NODES.map((n) => ({
+          label: n.label,
+          icon: <span style={{ color: NODE_META[n.type]?.accent }}>{n.icon}</span>,
+          onClick: () => addNodeAtScreen(n.type, ctxMenu.x, ctxMenu.y),
+        })),
+      },
+      "divider",
+      { label: "Select all", shortcut: mod("A"), onClick: selectAll, disabled: nodes.length === 0 },
+      { label: "Fit view", shortcut: "⇧1", onClick: () => rfRef.current?.fitView({ duration: 300, padding: 0.15 }), disabled: nodes.length === 0 },
+      { label: "Undo", shortcut: mod("Z"), onClick: handleUndo, disabled: !canUndo },
+      { label: "Redo", shortcut: mod("Z", true), onClick: handleRedo, disabled: !canRedo },
+      "divider",
+      { label: "Unlock all objects", shortcut: isMacPlatform() ? "⌥⇧⌘L" : "Ctrl+Alt+Shift+L", onClick: unlockAll, disabled: !anyLocked },
+    ];
+  }, [ctxMenu, nodes, handleCopy, handlePaste, duplicateSelection, reorderSelection, setSelectionLocked, deleteSelection, addNodeAtScreen, selectAll, handleUndo, handleRedo, canUndo, canRedo, unlockAll]);
+
+  // Keyboard: duplicate, lock, layer order, select all, fit view
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable) return;
+      const m = e.ctrlKey || e.metaKey;
+      const k = e.key.toLowerCase();
+      if (m && !e.shiftKey && k === "d") { e.preventDefault(); duplicateSelection(); }
+      else if (m && e.shiftKey && e.altKey && k === "l") { e.preventDefault(); unlockAll(); }
+      else if (m && e.shiftKey && !e.altKey && k === "l") {
+        e.preventDefault();
+        const sel = useWorkflowStore.getState().nodes.filter((n) => n.selected);
+        if (sel.length) setSelectionLocked(!sel.every((n) => n.data?.locked));
+      }
+      else if (m && !e.shiftKey && k === "a") { e.preventDefault(); selectAll(); }
+      else if (!m && !e.altKey && e.key === "]") reorderSelection("front");
+      else if (!m && !e.altKey && e.key === "[") reorderSelection("back");
+      else if (!m && e.shiftKey && (e.key === "!" || e.code === "Digit1")) rfRef.current?.fitView({ duration: 300, padding: 0.15 });
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [duplicateSelection, unlockAll, setSelectionLocked, selectAll, reorderSelection]);
+
   // ── Auto-trim + frame-extract on new connections ─────────────────────────────
   const handleConnect = useCallback((connection: Connection) => {
     onConnect(connection);
@@ -1510,8 +1708,10 @@ export default function WorkflowCanvas() {
       const dyingClass = isDying ? "node-dying" : null;
       return {
         ...n,
-        draggable: (isLockedMember || isLockedGroup) ? false : undefined,
-        className: [n.className, ancestorClass, groupPreviewClass, dyingClass].filter(Boolean).join(" ") || undefined,
+        draggable: (isLockedMember || isLockedGroup || !!n.data?.locked) ? false : undefined,
+        ...(n.data?.locked ? { deletable: false } : {}),
+        ...(typeof n.data?.zOrder === "number" && n.type !== "groupNode" ? { zIndex: n.data.zOrder as number } : {}),
+        className: [n.className, ancestorClass, groupPreviewClass, dyingClass, lockBadgeClass(n)].filter(Boolean).join(" ") || undefined,
         style: {
           ...n.style,
           opacity: isDying ? undefined : (isDimmed ? 0.25 : undefined),
@@ -1561,6 +1761,9 @@ export default function WorkflowCanvas() {
           onSelectionChange={onSelectionChange}
           onNodeClick={handleNodeClick}
           onPaneClick={handlePaneClick}
+          onNodeContextMenu={onNodeContextMenu}
+          onSelectionContextMenu={onSelectionContextMenu}
+          onPaneContextMenu={onPaneContextMenu}
           onNodeDragStart={handleNodeDragStart}
           onNodeDragStop={handleNodeDragStop}
           onConnect={handleConnect}
@@ -1600,6 +1803,7 @@ export default function WorkflowCanvas() {
         >
           <Background variant={BackgroundVariant.Dots} gap={28} size={1.5} color="#888888" />
           <ViewportSyncer />
+          <FlowInstanceBridge instanceRef={rfRef} />
           <GroupPreviewOverlay groupIds={potentialGroupIds} />
           <SelectionToolbar />
 
@@ -1616,6 +1820,10 @@ export default function WorkflowCanvas() {
               anchorRect={addMenuAnchor}
               onClose={() => setAddMenuAnchor(null)}
             />
+          )}
+
+          {ctxMenu && (
+            <CanvasContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxItems} onClose={closeCtxMenu} />
           )}
 
           <FlowBuilderPanel />

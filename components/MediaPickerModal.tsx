@@ -120,6 +120,33 @@ export function MediaPickerModal({
   const [urlLoading, setUrlLoading] = useState(false);
   const [urlError, setUrlError] = useState("");
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
+  // Two-step delete for uploads: first click arms, second click deletes
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const deleteUpload = useCallback(async (item: GalleryItem) => {
+    setDeletingId(item.id);
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const res = await fetch("/api/gallery", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ id: item.id, source: item.source }),
+      });
+      if (!res.ok) return;
+      if (selectedUrls?.includes(item.url)) onDeselect?.(item.url);
+      setSourceItems((prev) => prev.filter((i) => i.id !== item.id));
+      for (const key of ["images-upload", "videos-upload", "images-generation", "videos-generation"]) {
+        const cached = galleryCache.get(key);
+        if (cached?.items.some((i) => i.id === item.id)) {
+          galleryCache.set(key, { ...cached, items: cached.items.filter((i) => i.id !== item.id) });
+        }
+      }
+    } finally {
+      setDeletingId(null);
+      setConfirmDeleteId(null);
+    }
+  }, [selectedUrls, onDeselect]);
   const [previewItem, setPreviewItem] = useState<GalleryItem | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
@@ -599,6 +626,7 @@ export function MediaPickerModal({
                     }}
                     onMouseLeave={(e) => {
                       setHoveredItemId(null);
+                      setConfirmDeleteId((c) => (c === item.id ? null : c));
                       if (!isSelected) e.currentTarget.style.borderColor = "transparent";
                       e.currentTarget.style.transform = "scale(1)";
                       const v = e.currentTarget.querySelector("video");
@@ -626,6 +654,35 @@ export function MediaPickerModal({
                             <polygon points="5 3 19 12 5 21 5 3" />
                           </svg>
                         </div>
+                      </div>
+                    )}
+                    {item.source === "upload" && (hoveredItemId === item.id || confirmDeleteId === item.id || deletingId === item.id) && (
+                      <div
+                        role="button"
+                        title={confirmDeleteId === item.id ? "Click again to delete this upload" : "Delete upload"}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (deletingId) return;
+                          if (confirmDeleteId === item.id) void deleteUpload(item);
+                          else setConfirmDeleteId(item.id);
+                        }}
+                        style={{
+                          position: "absolute", top: "4px", left: "4px", height: "18px",
+                          padding: confirmDeleteId === item.id ? "0 6px" : 0, minWidth: "18px",
+                          borderRadius: "4px", zIndex: 2, cursor: "pointer",
+                          background: confirmDeleteId === item.id ? "rgba(220,38,38,0.9)" : "rgba(0,0,0,0.65)",
+                          display: "flex", alignItems: "center", justifyContent: "center", gap: "4px",
+                          color: "white", fontSize: "9.5px", fontWeight: 600,
+                        }}
+                      >
+                        {deletingId === item.id ? (
+                          <span style={{ width: "9px", height: "9px", borderRadius: "50%", border: "1.5px solid rgba(255,255,255,0.3)", borderTopColor: "white", display: "inline-block", animation: "spin 0.75s linear infinite" }} />
+                        ) : (
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.9)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" />
+                          </svg>
+                        )}
+                        {confirmDeleteId === item.id && deletingId !== item.id && "Delete?"}
                       </div>
                     )}
                     {hoveredItemId === item.id && (

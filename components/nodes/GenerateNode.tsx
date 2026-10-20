@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState, Fragment } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAnimatedPopup } from "@/lib/useAnimatedPopup";
 import { createPortal } from "react-dom";
 import GenerateButton from "@/components/nodes/GenerateButton";
@@ -21,6 +21,9 @@ import { PROVIDERS, ProviderId, getModelProvider, setModelProvider, modelHasProv
 import { useGeneratingBorderAnimation } from "@/lib/useGeneratingBorderAnimation";
 import MissingInputWarning from "./MissingInputWarning";
 import CostBubble from "./CostBubble";
+import ModelPicker, { type PickerModel } from "./ModelPicker";
+import { useCostStore } from "@/lib/nodeCost";
+import { estimate, imageCostSpec } from "@/lib/pricing";
 
 // Derived from config — no hardcoding needed
 const MODELS = IMAGE_MODELS.map((m) => ({ id: m.id, name: m.name, meta: m.provider }));
@@ -206,6 +209,10 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
   const [hovering, setHovering] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
+  const modelAnchorRef = useRef<HTMLDivElement>(null);
+  const closeModelPicker = useCallback(() => setModelOpen(false), []);
+  const perUnit = useCostStore((st) => st.perUnit);
+  useEffect(() => { if (modelOpen) void useCostStore.getState().load(); }, [modelOpen]);
   const [providerOpen, setProviderOpen] = useState(false);
   const [ratioOpen, setRatioOpen] = useState(false);
   const [qualityOpen, setQualityOpen] = useState(false);
@@ -215,7 +222,6 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
   const [customWidthDraft, setCustomWidthDraft] = useState(1024);
   const [customHeightDraft, setCustomHeightDraft] = useState(1024);
   const [customSizeError, setCustomSizeError] = useState<string | null>(null);
-  const modelPopup = useAnimatedPopup(modelOpen && !data.imageUrl);
   const providerPopup = useAnimatedPopup(providerOpen);
   const ratioPopup = useAnimatedPopup(ratioOpen);
   const qualityPopup = useAnimatedPopup(qualityOpen);
@@ -249,6 +255,7 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
     const anyOpen = modelOpen || providerOpen || ratioOpen || qualityOpen || azureQualityOpen || azureResolutionOpen;
     if (!anyOpen) return;
     const handler = (e: MouseEvent) => {
+      if ((e.target as HTMLElement | null)?.closest?.(".model-picker-pop")) return;
       if (controlBarRef.current && !controlBarRef.current.contains(e.target as unknown as globalThis.Node)) {
         setModelOpen(false); setProviderOpen(false); setRatioOpen(false); setQualityOpen(false); setAzureQualityOpen(false); setAzureResolutionOpen(false); setAzureCustomSizeOpen(false);
       }
@@ -381,6 +388,22 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
   const quality = (data.quality as string) ?? "1k";
   const status = data.status ?? "idle";
 
+  // Rows for the model picker: resolutions, reference-image limit and cost per image
+  const pickerModels: PickerModel[] = useMemo(() => IMAGE_MODELS.map((m) => {
+    const qualities = m.supportsQuality ? (m.apiInput.qualityOptions ?? ["1k", "2k", "4k"]) : [];
+    const q = qualities.includes(quality) ? quality : (qualities[0] ?? "1k");
+    const est = estimate(imageCostSpec(m.id, q, m), perUnit);
+    return {
+      id: m.id,
+      name: m.name,
+      family: m.provider,
+      meta: qualities.length ? [qualities.map((x) => x.toUpperCase()).join(" / ")] : [],
+      tags: m.supportsImages ? [{ label: `Reference images${m.maxImages ? ` ×${m.maxImages}` : ""}`, title: "Accepts reference images" }] : [{ label: "Text only", title: "Does not take reference images" }],
+      credits: est.credits,
+      creditsEstimated: est.source === "starter",
+    };
+  }), [quality, perUnit]);
+
   const [currentProvider, setCurrentProvider] = useState<ProviderId>("kie");
   useEffect(() => {
     const read = () => setCurrentProvider(getModelProvider(model));
@@ -493,7 +516,7 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
   }, [id, updateNodeSize, updateNodeInternals]);
 
   const closeDropdowns = () => {
-    setModelOpen(false);
+    // The model picker is a portal that closes itself on outside click/Escape.
     setRatioOpen(false);
     setQualityOpen(false);
     setAzureQualityOpen(false);
@@ -1082,7 +1105,7 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
           <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-0">
 
           {/* Model pill */}
-          <div className="relative shrink-0">
+          <div className="relative shrink-0" ref={modelAnchorRef}>
             <button
               onMouseDown={(e) => e.stopPropagation()}
               onClick={() => {
@@ -1101,38 +1124,23 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
               </span>
               {!data.imageUrl && <ChevronIcon open={modelOpen} />}
             </button>
-            {modelPopup.visible && (
-              <div className={`absolute bottom-full left-0 mb-2 w-48 bg-[#111622] border border-[#1E2840] rounded-md overflow-y-auto overscroll-contain max-h-[min(60vh,520px)] nowheel z-[1002] shadow-2xl ${modelPopup.className}`} onWheel={(e) => e.stopPropagation()}>
-                {[...new Set(MODELS.map(m => m.meta))].map((provider, pi) => (
-                  <Fragment key={provider}>
-                    {pi > 0 && <div className="border-t border-white/[0.06] mx-2 my-0.5" />}
-                    {MODELS.filter(m => m.meta === provider).map(m => (
-                      <button
-                        key={m.id}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onClick={() => {
-                          const newCaps = MODEL_CAPS[m.id] ?? DEFAULT_CAPS;
-                          const validRatio = newCaps.ratios.includes(aspectRatio) ? aspectRatio : "1:1";
-                          const validQuality = newCaps.qualityOptions && !newCaps.qualityOptions.includes(quality as "1k" | "2k" | "4k")
-                            ? newCaps.qualityOptions[0]
-                            : quality;
-                          updateNodeData(id, { model: m.id, aspectRatio: validRatio, quality: validQuality });
-                          if (!newCaps.supportsImages) removeEdgesForHandle(id, "image");
-                          setModelOpen(false);
-                        }}
-                        className={`w-full flex items-center gap-2 px-3 py-[7px] text-[11px] hover:bg-[#141C28] transition-colors ${model === m.id ? "text-white" : "text-[#A0A0A0]"}`}
-                      >
-                        <span className="shrink-0 text-white/50" style={{ lineHeight: 0 }}>
-                          <NodeProviderIcon provider={m.meta} />
-                        </span>
-                        <span className="flex-1 text-left">{m.name}</span>
-                        <span className="text-[#4A4A45]">{m.meta}</span>
-                      </button>
-                    ))}
-                  </Fragment>
-                ))}
-              </div>
-            )}
+            <ModelPicker
+              anchorRef={modelAnchorRef}
+              open={modelOpen && !data.imageUrl}
+              onClose={closeModelPicker}
+              selectedId={model}
+              renderIcon={(family) => <NodeProviderIcon provider={family} />}
+              models={pickerModels}
+              onSelect={(mid) => {
+                const newCaps = MODEL_CAPS[mid] ?? DEFAULT_CAPS;
+                const validRatio = newCaps.ratios.includes(aspectRatio) ? aspectRatio : "1:1";
+                const validQuality = newCaps.qualityOptions && !newCaps.qualityOptions.includes(quality as "1k" | "2k" | "4k")
+                  ? newCaps.qualityOptions[0]
+                  : quality;
+                updateNodeData(id, { model: mid, aspectRatio: validRatio, quality: validQuality });
+                if (!newCaps.supportsImages) removeEdgesForHandle(id, "image");
+              }}
+            />
           </div>
 
           {/* Provider pill — only for models with more than one backend (e.g. GPT Image 2) */}

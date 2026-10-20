@@ -1,5 +1,5 @@
 "use client";
-import React, { useCallback, useEffect, useRef, useState, Fragment } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAnimatedPopup } from "@/lib/useAnimatedPopup";
 import { createPortal } from "react-dom";
 import GenerateButton from "@/components/nodes/GenerateButton";
@@ -16,6 +16,10 @@ import { videoCaps, HANDLE_LABEL, missingInputsMessage } from "@/lib/videoCaps";
 import { useGeneratingBorderAnimation } from "@/lib/useGeneratingBorderAnimation";
 import MissingInputWarning from "./MissingInputWarning";
 import CostBubble from "./CostBubble";
+import { useOutputStack, OutputStackIcon } from "./useOutputStack";
+import ModelPicker, { type PickerModel, durationRange, maxResolution } from "./ModelPicker";
+import { useCostStore } from "@/lib/nodeCost";
+import { estimate, videoCostSpec, videoTier } from "@/lib/pricing";
 
 type VideoGeneratorNodeType = Node<NodeData, "videoGeneratorNode">;
 
@@ -195,6 +199,7 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
   const multiSelected = useWorkflowStore((s) => s.nodes.filter((n) => n.selected).length > 1);
 
   const updateNodeInternals = useUpdateNodeInternals();
+  const outStack = useOutputStack(id);
   const cardRef = useRef<HTMLDivElement>(null);
   const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -217,6 +222,10 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
   const [hoveredSourceHandle, setHoveredSourceHandle] = useState<string | null>(null);
   const [errorHandles, setErrorHandles] = useState<Set<string>>(new Set());
   const [modelOpen, setModelOpen] = useState(false);
+  const modelAnchorRef = useRef<HTMLDivElement>(null);
+  const closeModelPicker = useCallback(() => setModelOpen(false), []);
+  const perUnit = useCostStore((s) => s.perUnit);
+  useEffect(() => { if (modelOpen) void useCostStore.getState().load(); }, [modelOpen]);
   const [ratioOpen, setRatioOpen] = useState(false);
   const [durOpen, setDurOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
@@ -257,6 +266,8 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
     const anyOpen = modelOpen || ratioOpen || durOpen || modeOpen || grokResOpen;
     if (!anyOpen) return;
     const handler = (e: MouseEvent) => {
+      // The model picker lives in a portal outside the control bar; it closes itself.
+      if ((e.target as HTMLElement | null)?.closest?.(".model-picker-pop")) return;
       if (controlBarRef.current && !controlBarRef.current.contains(e.target as unknown as globalThis.Node)) {
         setModelOpen(false); setRatioOpen(false); setDurOpen(false);
         setModeOpen(false); setGrokResOpen(false);
@@ -395,6 +406,37 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
     return ((src?.data?.videoAspectRatio ?? src?.data?.imageNaturalRatio) as string | undefined) ?? undefined;
   });
   const sound = (data.sound as boolean) ?? false;
+
+  // Rows for the model picker: max resolution, duration range, capability
+  // tags and an estimated cost at the current duration.
+  const pickerModels: PickerModel[] = useMemo(() => {
+    const wired: string[] = [...new Set<string>(edges.filter((e) => e.target === id && e.targetHandle).map((e) => e.targetHandle as string))];
+    return VIDEO_MODEL_CFG.map((m) => {
+      const dur = m.durations.includes(duration) && duration > 0 ? duration : (m.defaultDuration > 0 ? m.defaultDuration : (m.apiInput.useGoogleVeo ? 8 : 5));
+      const res = m.resolutions?.includes(resolution) ? resolution : m.defaultResolution;
+      const est = estimate(videoCostSpec(m.id, videoTier(m, m.defaultMode, res), m.sound ? sound : false, dur), perUnit);
+      const meta = [maxResolution(m.resolutions ?? (m.modes ? m.modes.map((x) => x.label).filter((l) => /\d+p$|4k/i.test(l)) : undefined)), durationRange(m.durations, m.apiInput.useGoogleVeo ? 8 : m.defaultDuration), m.sound ? "Audio" : null]
+        .filter((x): x is string => !!x);
+      let warning: string | null = null;
+      if (m.id !== videoModelId) {
+        const keeps = new Set(m.handles as string[]);
+        if (keeps.has("referenceVideo")) keeps.add("videoRef");
+        if (keeps.has("videoRef")) keeps.add("referenceVideo");
+        const dropped = wired.filter((h) => !keeps.has(h));
+        if (dropped.length) warning = `drops: ${dropped.map((h) => HANDLE_LABEL[h] ?? h).join(", ")}`;
+      }
+      return {
+        id: m.id,
+        name: m.name,
+        family: m.provider,
+        meta,
+        tags: videoCaps(m),
+        credits: est.credits,
+        creditsEstimated: est.source === "starter",
+        warning,
+      };
+    });
+  }, [edges, id, duration, resolution, sound, perUnit, videoModelId]);
   const seed = (data.seed as number | undefined) ?? 0;
   const status = (data.status as string) ?? "idle";
   const prompt = (data.prompt as string) ?? "";
@@ -616,7 +658,9 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
   const durations = cfg.durations;
 
   const closeAll = () => {
-    setModelOpen(false); setRatioOpen(false); setDurOpen(false);
+    // The model picker is a portal that closes itself on outside click/Escape,
+    // so leaving the card (e.g. moving into the picker) must not close it.
+    setRatioOpen(false); setDurOpen(false);
     setModeOpen(false); setGrokResOpen(false);
     setHovering(false);
   };
@@ -1235,12 +1279,12 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
             type="source"
             position={Position.Right}
             id={h.id}
-            style={{ top: `calc(50% + ${sourceHandleCenterOffset(i)}px)`, visibility: visible ? undefined : "hidden", pointerEvents: visible ? undefined : "none" }}
-            className={`node-handle-icon node-handle-icon-out-${h.type}${edges.some((e) => e.source === id && e.sourceHandle === h.id) ? " node-handle-connected" : ""}${(data.hasError as boolean) ? " node-handle-error" : ""}`}
-            onMouseEnter={() => { if (visible) setHoveredSourceHandle(h.id); }}
-            onMouseLeave={() => setHoveredSourceHandle(null)}
+            style={{ top: outStack.top(sourceHandleCenterOffset(i)), visibility: visible ? undefined : "hidden", pointerEvents: visible ? undefined : "none" }}
+            className={`node-handle-icon node-out-stack node-handle-icon-out-${h.type}${edges.some((e) => e.source === id && e.sourceHandle === h.id) ? " node-handle-connected" : ""}${(data.hasError as boolean) ? " node-handle-error" : ""}`}
+            onMouseEnter={() => { outStack.enter(); if (visible && outStack.open) setHoveredSourceHandle(h.id); }}
+            onMouseLeave={() => { outStack.leave(); setHoveredSourceHandle(null); }}
           >
-            {h.icon}
+            {outStack.open ? h.icon : <OutputStackIcon />}
           </Handle>
         );
       })}
@@ -1803,7 +1847,7 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
               <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-0">
 
                 {/* Model */}
-                <div className="relative">
+                <div className="relative" ref={modelAnchorRef}>
                   <Pill onClick={() => { setModelOpen((o) => !o); setRatioOpen(false); setDurOpen(false); setModeOpen(false); setGrokResOpen(false); }}>
                     <span className="shrink-0 text-white/60" style={{ lineHeight: 0 }}>
                       <NodeProviderIcon provider={cfg.provider} />
@@ -1811,80 +1855,42 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
                     <span className="text-[11px] text-white/70">{cfg.name}</span>
                     <ChevronIcon open={modelOpen} />
                   </Pill>
-                  <FloatMenu open={modelOpen}>
-                    {[...new Set(VIDEO_MODEL_CFG.map(m => m.provider))].map((provider, pi) => (
-                      <Fragment key={provider}>
-                        {pi > 0 && <div style={{ height: "1px", background: "rgba(255,255,255,0.06)", margin: "4px 8px" }} />}
-                        <div style={{ padding: "5px 10px 3px", fontSize: "10px", color: "rgba(255,255,255,0.22)", textTransform: "uppercase", letterSpacing: "0.09em", fontWeight: 500 }}>
-                          {provider}
-                        </div>
-                        {VIDEO_MODEL_CFG.filter(m => m.provider === provider).map(m => (
-                          <button
-                            key={m.id}
-                            onMouseDown={(e) => e.stopPropagation()}
-                            onClick={() => {
-                              const validRatio = m.ratios.includes(aspectRatio) ? aspectRatio : m.defaultRatio;
-                              const validDur = m.durations.includes(duration) ? duration : m.defaultDuration;
-                              const validRes = m.resolutions
-                                ? (m.resolutions.includes(resolution) ? resolution : (m.defaultResolution ?? m.resolutions[0]))
-                                : undefined;
-                              updateNodeData(id, { videoModel: m.id, aspectRatio: validRatio, duration: validDur, ...(validRes !== undefined && { grokResolution: validRes }) });
-                              const removedHandles = (cfg.handles as string[]).filter((h) => !(m.handles as string[]).includes(h));
-                              const wasMotionControl = cfg.apiInput.useMotionControl;
-                              const isMotionControl = m.apiInput.useMotionControl;
-                              if (wasMotionControl !== isMotionControl && !removedHandles.includes("startFrame")) {
-                                removedHandles.push("startFrame");
-                              }
-                              const oldHasVideoRef = (cfg.handles as string[]).includes("videoRef");
-                              const newHasVideoRef = (m.handles as string[]).includes("videoRef");
-                              const oldHasRefVideo = (cfg.handles as string[]).includes("referenceVideo");
-                              const newHasRefVideo = (m.handles as string[]).includes("referenceVideo");
-                              if (oldHasVideoRef && !newHasVideoRef && newHasRefVideo) {
-                                remapTargetHandle(id, "videoRef", "referenceVideo");
-                                removedHandles.splice(removedHandles.indexOf("videoRef"), 1);
-                              } else if (oldHasRefVideo && !newHasRefVideo && newHasVideoRef) {
-                                remapTargetHandle(id, "referenceVideo", "videoRef");
-                                removedHandles.splice(removedHandles.indexOf("referenceVideo"), 1);
-                              }
-                              if (removedHandles.length) killEdgesForHandles(id, removedHandles);
-                              setModelOpen(false);
-                            }}
-                            className={`w-full flex items-center gap-2 px-3 py-2 text-[11px] hover:bg-[#141C28] transition-colors ${videoModelId === m.id ? "text-white font-medium" : "text-[#A0A0A0]"}`}
-                          >
-                            <span className="shrink-0 text-white/50" style={{ lineHeight: 0 }}>
-                              <NodeProviderIcon provider={m.provider} />
-                            </span>
-                            <span className="flex-1 text-left">
-                              <span className="block whitespace-nowrap">{m.name}</span>
-                              <span className="flex flex-wrap gap-1 mt-0.5">
-                                {videoCaps(m).map((t) => (
-                                  <span key={t.label} title={t.title}
-                                    className={`px-1.5 rounded text-[9px] leading-[15px] ${t.strong ? "bg-teal-500/15 text-teal-200" : "bg-white/[0.06] text-white/45"}`}>
-                                    {t.label}
-                                  </span>
-                                ))}
-                              </span>
-                              {(() => {
-                                // Inputs already wired into this node that this model would drop
-                                if (m.id === videoModelId) return null;
-                                const wired: string[] = [...new Set<string>(edges.filter((e) => e.target === id && e.targetHandle).map((e) => e.targetHandle as string))];
-                                const keeps = new Set(m.handles as string[]);
-                                // videoRef <-> referenceVideo are remapped on switch, not dropped
-                                if (keeps.has("referenceVideo")) keeps.add("videoRef");
-                                if (keeps.has("videoRef")) keeps.add("referenceVideo");
-                                const dropped = wired.filter((h) => !keeps.has(h));
-                                return dropped.length ? (
-                                  <span className="block mt-0.5 text-[9px] text-amber-300/90">
-                                    drops: {dropped.map((h) => HANDLE_LABEL[h] ?? h).join(", ")}
-                                  </span>
-                                ) : null;
-                              })()}
-                            </span>
-                          </button>
-                        ))}
-                      </Fragment>
-                    ))}
-                  </FloatMenu>
+                  <ModelPicker
+                    anchorRef={modelAnchorRef}
+                    open={modelOpen}
+                    onClose={closeModelPicker}
+                    selectedId={videoModelId}
+                    renderIcon={(family) => <NodeProviderIcon provider={family} />}
+                    models={pickerModels}
+                    onSelect={(mid) => {
+                        const m = VIDEO_MODEL_CFG.find((x) => x.id === mid);
+                        if (!m || m.id === videoModelId) return;
+                        const validRatio = m.ratios.includes(aspectRatio) ? aspectRatio : m.defaultRatio;
+                        const validDur = m.durations.includes(duration) ? duration : m.defaultDuration;
+                        const validRes = m.resolutions
+                          ? (m.resolutions.includes(resolution) ? resolution : (m.defaultResolution ?? m.resolutions[0]))
+                          : undefined;
+                        updateNodeData(id, { videoModel: m.id, aspectRatio: validRatio, duration: validDur, ...(validRes !== undefined && { grokResolution: validRes }) });
+                        const removedHandles = (cfg.handles as string[]).filter((h) => !(m.handles as string[]).includes(h));
+                        const wasMotionControl = cfg.apiInput.useMotionControl;
+                        const isMotionControl = m.apiInput.useMotionControl;
+                        if (wasMotionControl !== isMotionControl && !removedHandles.includes("startFrame")) {
+                          removedHandles.push("startFrame");
+                        }
+                        const oldHasVideoRef = (cfg.handles as string[]).includes("videoRef");
+                        const newHasVideoRef = (m.handles as string[]).includes("videoRef");
+                        const oldHasRefVideo = (cfg.handles as string[]).includes("referenceVideo");
+                        const newHasRefVideo = (m.handles as string[]).includes("referenceVideo");
+                        if (oldHasVideoRef && !newHasVideoRef && newHasRefVideo) {
+                          remapTargetHandle(id, "videoRef", "referenceVideo");
+                          removedHandles.splice(removedHandles.indexOf("videoRef"), 1);
+                        } else if (oldHasRefVideo && !newHasRefVideo && newHasVideoRef) {
+                          remapTargetHandle(id, "referenceVideo", "videoRef");
+                          removedHandles.splice(removedHandles.indexOf("referenceVideo"), 1);
+                        }
+                        if (removedHandles.length) killEdgesForHandles(id, removedHandles);
+                    }}
+                  />
                 </div>
 
                 {/* Duration */}
