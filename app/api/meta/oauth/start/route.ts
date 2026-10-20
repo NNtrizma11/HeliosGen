@@ -22,6 +22,10 @@ export async function GET(req: NextRequest) {
   url.searchParams.set("client_id", appId);
   url.searchParams.set("redirect_uri", `${origin}/api/meta/oauth/callback`);
   url.searchParams.set("state", state);
+  // Login for Business must return an authorization code (exchanged server-side in the callback);
+  // without this, Facebook defaults to response_type=token, which the flow rejects.
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("override_default_response_type", "true");
   // Business-type apps use "Facebook Login for Business", which takes a configuration id instead of scopes
   if (process.env.META_CONFIG_ID) url.searchParams.set("config_id", process.env.META_CONFIG_ID);
   else url.searchParams.set("scope", "ads_read,business_management");
