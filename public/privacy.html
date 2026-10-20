@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HeliosGen Privacy Policy</title>
+<style>
+  :root { --bg:#0b0c0f; --fg:#e8e8ea; --muted:#9a9ba3; --line:#24262c; --link:#7cb7ff; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.65 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:48px 16px 80px; }
+  h1 { font-size:30px; margin:0 0 4px; }
+  h2 { font-size:19px; margin:36px 0 8px; padding-top:20px; border-top:1px solid var(--line); }
+  p, li { color:var(--fg); } .muted { color:var(--muted); }
+  a { color:var(--link); } ul { padding-left:22px; }
+  table { width:100%; border-collapse:collapse; font-size:15px; } td, th { text-align:left; vertical-align:top; padding:8px; border-bottom:1px solid var(--line); }
+</style>
+</head>
+<body>
+<main>
+<h1>HeliosGen Privacy Policy</h1>
+<p class="muted">Last updated: 20 October 2026</p>
+
+<p>HeliosGen is an advertising analytics and creative-production tool operated by <strong>Hermes Global OOD</strong> (UIC/BULSTAT 208455334), Sofia, Bulgaria ("we", "us"). This policy explains what data HeliosGen collects when a business connects its Meta (Facebook) ad accounts, how we use it, and how to have it deleted.</p>
+
+<h2>1. Who this applies to</h2>
+<p>This policy covers businesses and their authorised administrators who sign in to HeliosGen and connect Meta ad accounts through "Continue with Facebook" (Facebook Login for Business).</p>
+
+<h2>2. Data we collect from Meta</h2>
+<p>When a business administrator connects, they choose the business and the specific ad accounts to share. Meta then issues HeliosGen a read-only business access token for those accounts. Using that token, HeliosGen reads:</p>
+<table>
+<tr><th>Data</th><th>Examples</th></tr>
+<tr><td>Connection details</td><td>The Meta ID and name returned for the connection, the access token, and its expiry</td></tr>
+<tr><td>Ad account details</td><td>Account ID, name, currency, time zone, status, owning business name</td></tr>
+<tr><td>Ad structure and creative</td><td>Campaign, ad set and ad IDs and names, delivery status, ad text, call-to-action, image and video thumbnails/IDs</td></tr>
+<tr><td>Performance metrics</td><td>Daily spend, impressions, reach, clicks, purchases and purchase value, video view metrics, per ad</td></tr>
+<tr><td>Aggregated breakdowns</td><td>Spend and results aggregated by age range, gender, country, platform and device</td></tr>
+</table>
+<p>All of this is aggregated advertising data from the Meta Marketing API. HeliosGen does <strong>not</strong> receive personal data about the people who saw or clicked ads, does not access Pages, Instagram accounts, messages, friends lists or personal profiles, and does not create, edit or pause ads.</p>
+
+<h2>3. How we use it</h2>
+<ul>
+<li>To show the connected business its own spend, purchases, ROAS and creative performance in HeliosGen dashboards.</li>
+<li>To compare creative performance and suggest new creative tests for that business.</li>
+</ul>
+<p>We do not sell this data, use it for advertising targeting, share it with other HeliosGen customers, or combine it with data from other businesses.</p>
+
+<h2>4. Storage and security</h2>
+<p>Data is stored in a managed PostgreSQL database (Supabase) and the application runs on Railway, both using encrypted connections. Access tokens are stored server-side and are never exposed to the browser. Access to the stored data is limited to the connected business's own HeliosGen users.</p>
+
+<h2>5. Service providers</h2>
+<ul>
+<li><strong>Meta Platforms</strong>: source of the advertising data (governed by Meta's own terms).</li>
+<li><strong>Supabase</strong>: database hosting.</li>
+<li><strong>Railway</strong>: application hosting.</li>
+</ul>
+
+<h2>6. Retention</h2>
+<p>We keep synced data while the connection is active and the business uses HeliosGen. A business can revoke access at any time in Meta Business Settings → Integrations, or by removing the connection in HeliosGen. On a deletion request (section 7) we delete the token and all synced data for those ad accounts within 30 days.</p>
+
+<h2>7. Your rights and data deletion</h2>
+<p>Under the GDPR you may request access to, correction of, or deletion of your data. To delete everything HeliosGen holds for your business, follow the steps on our <a href="/data-deletion.html">data deletion page</a>. You may also complain to the Bulgarian Commission for Personal Data Protection (cpdp.bg).</p>
+
+<h2>8. Contact</h2>
+<p>Hermes Global OOD, Sofia, Bulgaria<br>Email: <a href="mailto:info@nutrizma.com">info@nutrizma.com</a></p>
+
+<h2>9. Changes</h2>
+<p>We will update this page if our practices change and revise the "Last updated" date above.</p>
+</main>
+</body>
+</html>
