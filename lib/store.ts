@@ -234,6 +234,9 @@ interface WorkflowStore {
   setSettingsOpen:           (v: boolean) => void;
   authModalOpen:             boolean;
   setAuthModalOpen:          (v: boolean) => void;
+  /** Build with AI panel is open (canvas content makes room for it) */
+  builderOpen:               boolean;
+  setBuilderOpen:            (v: boolean) => void;
   authModalView:             "signin" | "signup" | "forgot";
   setAuthModalView:          (v: "signin" | "signup" | "forgot") => void;
   resetPasswordModalOpen:    boolean;
@@ -798,6 +801,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
         settingsOpen:              false,
         setSettingsOpen:           (v) => set({ settingsOpen: v }),
         authModalOpen:             false,
+        builderOpen:               false,
+        setBuilderOpen:            (v) => set({ builderOpen: v }),
         // The desktop/guest build has no accounts — never surface the auth modal.
         setAuthModalOpen:          (v) =>
           set({ authModalOpen: process.env.NEXT_PUBLIC_GUEST_MODE === "true" ? false : v }),

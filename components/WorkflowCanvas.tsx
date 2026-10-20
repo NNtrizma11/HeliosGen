@@ -38,6 +38,7 @@ import AssistantNode from "./nodes/AssistantNode";
 import VoiceNode from "@/components/nodes/VoiceNode";
 import FlowBuilderPanel from "@/components/FlowBuilderPanel";
 import AssetPickerPanel from "@/components/AssetPickerPanel";
+import NodeInspector from "@/components/NodeInspector";
 import BatchRunPanel from "@/components/BatchRunPanel";
 import GroupNode from "./nodes/GroupNode";
 import NodePickerMenu, { DropState } from "./NodePickerMenu";
@@ -1151,6 +1152,7 @@ export default function WorkflowCanvas() {
   const activeSpace = useWorkflowStore((s) => s.spaces.find((sp) => sp.id === s.activeSpaceId));
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [assetsOpen, setAssetsOpen] = useState(false);
+  const builderOpen = useWorkflowStore((s) => s.builderOpen);
 
   // ── Alignment snap guides ─────────────────────────────────────────────────────
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
@@ -1827,6 +1829,7 @@ export default function WorkflowCanvas() {
           )}
 
           <FlowBuilderPanel />
+          <NodeInspector />
           <AssetPickerPanel open={assetsOpen} onClose={() => setAssetsOpen(false)} />
           <BatchRunPanel />
 
@@ -1888,7 +1891,10 @@ export default function WorkflowCanvas() {
 
         {/* ── Welcome screen (empty state) ─────────────────────────────────────── */}
         {nodes.length === 0 && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-10">
+          <div
+            className="absolute inset-y-0 left-0 flex flex-col items-center justify-center pointer-events-none z-10 transition-[right] duration-300"
+            style={{ right: builderOpen ? 430 : 0 }}
+          >
             {/* Ambient glow */}
             <div
               className="absolute inset-0 pointer-events-none"
@@ -1918,7 +1924,7 @@ export default function WorkflowCanvas() {
 
               {/* Node cards */}
               <motion.div
-                className="flex items-stretch gap-4 pointer-events-auto"
+                className="flex flex-wrap justify-center items-stretch gap-4 pointer-events-auto px-6"
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: 0.25 }}

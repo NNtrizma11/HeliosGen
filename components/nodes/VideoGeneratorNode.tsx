@@ -13,6 +13,7 @@ import { useReadOnly } from "@/lib/readOnlyContext";
 import { ShieldBan } from "lucide-react";
 import { VIDEO_MODELS as VIDEO_MODEL_CFG } from "@/lib/modelConfig";
 import { videoCaps, HANDLE_LABEL, missingInputsMessage } from "@/lib/videoCaps";
+import { switchVideoModel } from "@/lib/nodeModelSwitch";
 import { useGeneratingBorderAnimation } from "@/lib/useGeneratingBorderAnimation";
 import MissingInputWarning from "./MissingInputWarning";
 import CostBubble from "./CostBubble";
@@ -1209,6 +1210,15 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
     onNodesChange([id, ...newIds].map((nid) => ({ type: "select" as const, id: nid, selected: true })));
   }, [generate, genCount, id, addNode, insertEdge, onNodesChange]);
 
+  // The settings panel asks the node to generate via a window event
+  const handleGenerateBatchRef = useRef(handleGenerateBatch);
+  handleGenerateBatchRef.current = handleGenerateBatch;
+  useEffect(() => {
+    const onReq = (e: Event) => { if ((e as CustomEvent<{ id: string }>).detail?.id === id) handleGenerateBatchRef.current(); };
+    window.addEventListener("helios:generate", onReq);
+    return () => window.removeEventListener("helios:generate", onReq);
+  }, [id]);
+
   // Pipeline runner trigger — called by Run Pipeline button
   const generateRef = useRef(generate);
   useEffect(() => { generateRef.current = generate; }, [generate]);
@@ -1553,6 +1563,27 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
               </div>
             )}
 
+            {/* Center play / pause — always visible while paused, on hover while playing */}
+            {typeof generations[currentGenIdx] === "string" && (
+              <button
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const v = videoRef.current;
+                  if (!v) return;
+                  if (v.paused) v.play().catch(() => { }); else v.pause();
+                }}
+                className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-14 h-14 rounded-full bg-black/45 backdrop-blur-sm flex items-center justify-center pointer-events-auto z-20 transition-opacity hover:bg-black/60 ${isPlaying ? "opacity-0 group-hover/player:opacity-100" : "opacity-100"}`}
+                title={isPlaying ? "Pause" : "Play"}
+              >
+                {isPlaying ? (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><rect x="6" y="4" width="4" height="16" rx="1" /><rect x="14" y="4" width="4" height="16" rx="1" /></svg>
+                ) : (
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="white" style={{ marginLeft: 3 }}><polygon points="6 3 20 12 6 21 6 3" /></svg>
+                )}
+              </button>
+            )}
+
             {/* Mute button — top right, shown on hover when video is ready */}
             {typeof generations[currentGenIdx] === "string" && (
               <button
@@ -1862,34 +1893,7 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
                     selectedId={videoModelId}
                     renderIcon={(family) => <NodeProviderIcon provider={family} />}
                     models={pickerModels}
-                    onSelect={(mid) => {
-                        const m = VIDEO_MODEL_CFG.find((x) => x.id === mid);
-                        if (!m || m.id === videoModelId) return;
-                        const validRatio = m.ratios.includes(aspectRatio) ? aspectRatio : m.defaultRatio;
-                        const validDur = m.durations.includes(duration) ? duration : m.defaultDuration;
-                        const validRes = m.resolutions
-                          ? (m.resolutions.includes(resolution) ? resolution : (m.defaultResolution ?? m.resolutions[0]))
-                          : undefined;
-                        updateNodeData(id, { videoModel: m.id, aspectRatio: validRatio, duration: validDur, ...(validRes !== undefined && { grokResolution: validRes }) });
-                        const removedHandles = (cfg.handles as string[]).filter((h) => !(m.handles as string[]).includes(h));
-                        const wasMotionControl = cfg.apiInput.useMotionControl;
-                        const isMotionControl = m.apiInput.useMotionControl;
-                        if (wasMotionControl !== isMotionControl && !removedHandles.includes("startFrame")) {
-                          removedHandles.push("startFrame");
-                        }
-                        const oldHasVideoRef = (cfg.handles as string[]).includes("videoRef");
-                        const newHasVideoRef = (m.handles as string[]).includes("videoRef");
-                        const oldHasRefVideo = (cfg.handles as string[]).includes("referenceVideo");
-                        const newHasRefVideo = (m.handles as string[]).includes("referenceVideo");
-                        if (oldHasVideoRef && !newHasVideoRef && newHasRefVideo) {
-                          remapTargetHandle(id, "videoRef", "referenceVideo");
-                          removedHandles.splice(removedHandles.indexOf("videoRef"), 1);
-                        } else if (oldHasRefVideo && !newHasRefVideo && newHasVideoRef) {
-                          remapTargetHandle(id, "referenceVideo", "videoRef");
-                          removedHandles.splice(removedHandles.indexOf("referenceVideo"), 1);
-                        }
-                        if (removedHandles.length) killEdgesForHandles(id, removedHandles);
-                    }}
+                    onSelect={(mid) => { if (mid !== videoModelId) switchVideoModel(id, mid); }}
                   />
                 </div>
 
@@ -2072,7 +2076,7 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
       {generations.length > 1 && (
         <div
           className="absolute left-0 right-0 flex items-center justify-center gap-1.5"
-          style={{ top: "calc(100% + 16px)" }}
+          style={{ top: "calc(100% + 12px)" }}
           onMouseDown={(e) => e.stopPropagation()}
         >
           <button
@@ -2083,17 +2087,29 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
           </button>
-          {generations.length <= 8 ? generations.map((_, i) => (
-            <button
-              key={i}
-              onClick={(e) => { e.stopPropagation(); goToGen(i); }}
-              className={`rounded-full transition-all ${i === currentGenIdx ? "w-3 h-1.5 bg-white" : "w-1.5 h-1.5 bg-white/40 hover:bg-white/70"}`}
-            />
-          )) : (
-            <span className="text-[10px] text-white/60 font-mono tabular-nums">
-              {currentGenIdx + 1} / {generations.length}
-            </span>
-          )}
+          <div className="flex items-center gap-1.5 overflow-x-auto max-w-[calc(100%-72px)] px-1 py-1 nowheel" style={{ scrollbarWidth: "none" }}>
+            {generations.map((entry, i) => {
+              const active = i === currentGenIdx;
+              return (
+                <button
+                  key={i}
+                  title={`Generation ${i + 1}${entry === null ? " (generating)" : typeof entry === "object" ? " (failed)" : ""}`}
+                  onClick={(e) => { e.stopPropagation(); goToGen(i); }}
+                  className={`relative shrink-0 w-9 h-9 rounded-full overflow-hidden bg-[#1a1d24] transition-all ${active ? "ring-2 ring-teal-300 ring-offset-2 ring-offset-[#0B0E14] scale-110" : "ring-1 ring-white/15 opacity-75 hover:opacity-100"}`}
+                >
+                  {typeof entry === "string" && entry ? (
+                    <video src={`${entry}#t=0.5`} muted playsInline preload="metadata" className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
+                  ) : entry === null ? (
+                    <span className="absolute inset-0 flex items-center justify-center">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="2.5" style={{ animation: "spin 0.9s linear infinite" }}><path d="M21 12a9 9 0 1 1-6.2-8.56" strokeLinecap="round" /></svg>
+                    </span>
+                  ) : (
+                    <span className="absolute inset-0 flex items-center justify-center text-[13px] font-bold text-red-300">!</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
           <button
             onClick={(e) => { e.stopPropagation(); goToGen(currentGenIdx + 1); }}
             disabled={currentGenIdx === generations.length - 1}
@@ -2335,7 +2351,7 @@ function SrcAudioIcon() {
   );
 }
 
-function NodeProviderIcon({ provider }: { provider: string }) {
+export function NodeProviderIcon({ provider }: { provider: string }) {
   switch (provider) {
     case "OpenAI":
       return <svg className="text-[#2DD4BF]" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path fillRule="evenodd" clipRule="evenodd" d="M22.408 9.80741C22.9487 8.17778 22.7685 6.37037 21.8974 4.88889C20.5758 2.60741 17.9024 1.45185 15.2891 1.98519C14.1477 0.711111 12.4656 0 10.7234 0C8.0501 0 5.70717 1.68889 4.86612 4.17778C3.15398 4.53333 1.68214 5.57037 0.811051 7.08148C-0.510601 9.36296 -0.210226 12.2074 1.56199 14.163C1.02131 15.8222 1.23158 17.6 2.10267 19.0815C3.42432 21.363 6.09766 22.5481 8.71093 21.9852C9.88239 23.2593 11.5345 24 13.2766 24C15.95 24 18.2929 22.3111 19.134 19.8222C20.8461 19.4667 22.3179 18.4296 23.189 16.9185C24.5107 14.637 24.2103 11.763 22.408 9.80741ZM13.2766 22.4296C12.1953 22.4296 11.174 22.0741 10.363 21.3926C10.393 21.363 10.4831 21.3333 10.5132 21.3037L15.3492 18.5481C15.5895 18.4 15.7397 18.163 15.7397 17.8667V11.1407L17.7823 12.2963C17.8123 12.2963 17.8123 12.3259 17.8123 12.3556V17.9259C17.8423 20.4148 15.7998 22.4296 13.2766 22.4296ZM3.48439 18.3111C2.94372 17.3926 2.76349 16.3259 2.94372 15.2889C2.97375 15.3185 3.03383 15.3481 3.0939 15.3778L7.92995 18.1333C8.17025 18.2815 8.47063 18.2815 8.71093 18.1333L14.6283 14.7556V17.0963C14.6283 17.1259 14.6283 17.1556 14.5983 17.1556L9.70216 19.9407C7.53946 21.1852 4.74597 20.4444 3.48439 18.3111ZM2.22282 7.88148C2.76349 6.96296 3.60454 6.28148 4.59578 5.8963V11.5852C4.59578 11.8519 4.74597 12.1185 4.98627 12.2667L10.9037 15.6444L8.86111 16.8C8.83108 16.8 8.80104 16.8296 8.80104 16.8L3.90492 14.0148C1.68214 12.7704 0.961239 10.0148 2.22282 7.88148ZM19.0438 11.7333L13.1264 8.35556L15.169 7.2C15.199 7.2 15.2291 7.17037 15.2291 7.2L20.1252 9.98519C22.3179 11.2296 23.0388 13.9852 21.7773 16.1185C21.2366 17.037 20.3955 17.7185 19.4043 18.0741V12.4148C19.4343 12.1481 19.2841 11.8815 19.0438 11.7333ZM21.0564 8.71111C21.0263 8.68148 20.9662 8.65185 20.9062 8.62222L16.0701 5.86667C15.8298 5.71852 15.5294 5.71852 15.2891 5.86667L9.37175 9.24444V6.9037C9.37175 6.87407 9.37175 6.84444 9.40179 6.84444L14.2979 4.05926C16.4906 2.81481 19.2541 3.55556 20.5157 5.71852C21.0564 6.60741 21.2366 7.67407 21.0564 8.71111ZM8.26036 12.8593L6.21781 11.7037C6.18777 11.7037 6.18777 11.6741 6.18777 11.6444V6.07407C6.18777 3.58519 8.23032 1.57037 10.7535 1.57037C11.8348 1.57037 12.8561 1.92593 13.6671 2.60741C13.6371 2.63704 13.577 2.66667 13.5169 2.6963L8.68089 5.45185C8.44059 5.6 8.2904 5.83704 8.2904 6.13333V12.8593H8.26036ZM9.37175 10.4889L12.0151 8.97778L14.6584 10.4889V13.4815L12.0151 14.9926L9.37175 13.4815V10.4889Z" /></svg>;
