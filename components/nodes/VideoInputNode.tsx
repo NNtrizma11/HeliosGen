@@ -3,6 +3,7 @@ import { useRef, useCallback, useState, useEffect } from "react";
 import NextImage from "next/image";
 import { Handle, Position, NodeProps, Node, useReactFlow, useUpdateNodeInternals } from "@xyflow/react";
 import CornerResizer from "./CornerResizer";
+import { useOutputStack, OutputStackIcon } from "./useOutputStack";
 import { useWorkflowStore, NodeData } from "@/lib/store";
 import { VIDEO_MODELS } from "@/lib/modelConfig";
 import { createClient } from "@/lib/supabase/client";
@@ -39,6 +40,7 @@ export default function VideoInputNode({ id, data, selected }: NodeProps<VideoIn
   const addToast        = useWorkflowStore((s) => s.addToast);
   const { deleteElements, setNodes } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
+  const outStack = useOutputStack(id);
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => updateNodeInternals(id));
@@ -699,12 +701,12 @@ export default function VideoInputNode({ id, data, selected }: NodeProps<VideoIn
               type="source"
               position={Position.Right}
               id={h.id}
-              style={{ top: `calc(50% + ${videoSourceHandleCenterOffset(i)}px)`, visibility: visible ? undefined : "hidden", pointerEvents: visible ? undefined : "none" }}
-              className={`node-handle-icon node-handle-icon-out-${h.type}${edges.some((e) => e.source === id && e.sourceHandle === h.id) ? " node-handle-connected" : ""}`}
-              onMouseEnter={() => { if (visible) setHoveredSrcHandle(h.id); }}
-              onMouseLeave={() => setHoveredSrcHandle(null)}
+              style={{ top: outStack.top(videoSourceHandleCenterOffset(i)), visibility: visible ? undefined : "hidden", pointerEvents: visible ? undefined : "none" }}
+              className={`node-handle-icon node-out-stack node-handle-icon-out-${h.type}${edges.some((e) => e.source === id && e.sourceHandle === h.id) ? " node-handle-connected" : ""}`}
+              onMouseEnter={() => { outStack.enter(); if (visible && outStack.open) setHoveredSrcHandle(h.id); }}
+              onMouseLeave={() => { outStack.leave(); setHoveredSrcHandle(null); }}
             >
-              {h.icon}
+              {outStack.open ? h.icon : <OutputStackIcon />}
             </Handle>
           );
         })}
@@ -1375,12 +1377,12 @@ export default function VideoInputNode({ id, data, selected }: NodeProps<VideoIn
             type="source"
             position={Position.Right}
             id={h.id}
-            style={{ top: `calc(50% + ${videoSourceHandleCenterOffset(i)}px)`, visibility: visible ? undefined : "hidden", pointerEvents: visible ? undefined : "none" }}
-            className={`node-handle-icon node-handle-icon-out-${h.type}${edges.some((e) => e.source === id && e.sourceHandle === h.id) ? " node-handle-connected" : ""}`}
-            onMouseEnter={() => { if (visible) setHoveredSrcHandle(h.id); }}
-            onMouseLeave={() => setHoveredSrcHandle(null)}
+            style={{ top: outStack.top(videoSourceHandleCenterOffset(i)), visibility: visible ? undefined : "hidden", pointerEvents: visible ? undefined : "none" }}
+            className={`node-handle-icon node-out-stack node-handle-icon-out-${h.type}${edges.some((e) => e.source === id && e.sourceHandle === h.id) ? " node-handle-connected" : ""}`}
+            onMouseEnter={() => { outStack.enter(); if (visible && outStack.open) setHoveredSrcHandle(h.id); }}
+            onMouseLeave={() => { outStack.leave(); setHoveredSrcHandle(null); }}
           >
-            {h.icon}
+            {outStack.open ? h.icon : <OutputStackIcon />}
           </Handle>
         );
       })}
