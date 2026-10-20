@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { resolveUserId } from "@/lib/guestMode";
+import { visibleAccountIds } from "@/lib/meta";
 
 export const dynamic = "force-dynamic";
 
@@ -49,14 +50,19 @@ async function fetchAll<T>(build: (from: number, to: number) => PromiseLike<{ da
 }
 
 export async function GET(req: NextRequest) {
-  if (!(await resolveUserId(req))) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const userId = await resolveUserId(req);
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const accountId = req.nextUrl.searchParams.get("account_id") ?? "";
   const todayMode = req.nextUrl.searchParams.get("days") === "today";
   const days = todayMode ? 1 : Math.min(90, Math.max(1, Number(req.nextUrl.searchParams.get("days")) || 7));
   if (!accountId) return NextResponse.json({ error: "account_id required" }, { status: 400 });
 
   // "all" = every account that syncs (they share one currency here; mixed currencies would need conversion)
-  const { data: enabledAccounts } = await supabaseAdmin.from("meta_ad_accounts").select("*").eq("sync_enabled", true);
+  const visible = await visibleAccountIds(userId);
+  if (visible && accountId !== "all" && !visible.includes(accountId)) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  let enabledQ = supabaseAdmin.from("meta_ad_accounts").select("*").eq("sync_enabled", true);
+  if (visible) enabledQ = enabledQ.in("account_id", visible.length ? visible : ["-"]);
+  const { data: enabledAccounts } = await enabledQ;
   const ids = accountId === "all" ? (enabledAccounts ?? []).map((a) => a.account_id as string) : [accountId];
   if (!ids.length) return NextResponse.json({ error: "No accounts are syncing yet." }, { status: 400 });
 

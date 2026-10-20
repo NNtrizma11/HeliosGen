@@ -10,6 +10,7 @@ import { askClaude } from "@/lib/kieClaude";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { resolveUserId } from "@/lib/guestMode";
 import { getKieToken } from "@/lib/getKieToken";
+import { canSeeAccount } from "@/lib/meta";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -69,8 +70,11 @@ function extractJson(text: string) {
 }
 
 export async function GET(req: NextRequest) {
-  if (!(await resolveUserId(req))) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const userId = await resolveUserId(req);
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const adId = req.nextUrl.searchParams.get("ad_id") ?? "";
+  const { data: owner } = await supabaseAdmin.from("meta_ads").select("account_id").eq("ad_id", adId).maybeSingle();
+  if (!owner || !(await canSeeAccount(userId, owner.account_id as string))) return NextResponse.json({ sets: [] });
   const { data, error } = await supabaseAdmin.from("meta_ad_iterations").select("*").eq("ad_id", adId).order("created_at", { ascending: false }).limit(10);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ sets: data ?? [] });
@@ -84,7 +88,7 @@ export async function POST(req: NextRequest) {
 
   const { ad_id } = await req.json().catch(() => ({}));
   const { data: ad } = await supabaseAdmin.from("meta_ads").select("*").eq("ad_id", String(ad_id ?? "")).single();
-  if (!ad) return NextResponse.json({ error: "Ad not found" }, { status: 404 });
+  if (!ad || !(await canSeeAccount(userId, ad.account_id as string))) return NextResponse.json({ error: "Ad not found" }, { status: 404 });
   const { data: account } = await supabaseAdmin.from("meta_ad_accounts").select("name, market, currency").eq("account_id", ad.account_id).single();
 
   const iso = (d: Date) => d.toISOString().slice(0, 10);

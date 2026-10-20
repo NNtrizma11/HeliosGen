@@ -5,18 +5,22 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { resolveUserId } from "@/lib/guestMode";
-import { syncAccount, syncAll } from "@/lib/meta";
+import { canSeeAccount, syncAccount, syncAll, visibleAccountIds } from "@/lib/meta";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 800;
 
 export async function POST(req: NextRequest) {
   const cron = !!process.env.META_CRON_SECRET && req.headers.get("x-cron-secret") === process.env.META_CRON_SECRET;
-  if (!cron && !(await resolveUserId(req))) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const userId = cron ? null : await resolveUserId(req);
+  if (!cron && !userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = await req.json().catch(() => ({}));
   try {
-    if (body.account_id) return NextResponse.json({ ok: true, result: await syncAccount(String(body.account_id), { full: !!body.full }) });
-    return NextResponse.json({ ok: true, results: await syncAll() });
+    if (body.account_id) {
+      if (userId && !(await canSeeAccount(userId, String(body.account_id)))) return NextResponse.json({ error: "Not found" }, { status: 404 });
+      return NextResponse.json({ ok: true, result: await syncAccount(String(body.account_id), { full: !!body.full }) });
+    }
+    return NextResponse.json({ ok: true, results: await syncAll(userId ? await visibleAccountIds(userId) : null) });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502 });
   }
