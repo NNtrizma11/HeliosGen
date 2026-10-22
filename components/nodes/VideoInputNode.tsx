@@ -671,27 +671,6 @@ export default function VideoInputNode({ id, data, selected }: NodeProps<VideoIn
         <CornerResizer minWidth={160} minHeight={80} keepAspectRatio />
         <span className="node-above-label">{data.label as string}</span>
 
-        {/* Decorative input handles — purely visual, no effect on the node */}
-        <Handle
-          type="target"
-          position={Position.Left}
-          id="decorativeText"
-          style={{ top: "calc(50% - 16px)" }}
-          className={`node-handle-icon node-handle-icon-prompt${edges.some((e) => e.target === id && e.targetHandle === "decorativeText") ? " node-handle-connected" : ""}`}
-          title="Text input"
-        >
-          <PromptIcon />
-        </Handle>
-        <Handle
-          type="target"
-          position={Position.Left}
-          id="decorativeImage"
-          style={{ top: "calc(50% + 16px)" }}
-          className={`node-handle-icon node-handle-icon-resource${edges.some((e) => e.target === id && e.targetHandle === "decorativeImage") ? " node-handle-connected" : ""}`}
-          title="Image input"
-        >
-          <PhotoIcon />
-        </Handle>
 
         {VIDEO_SOURCE_HANDLES.map((h, i) => {
           const visible = visibleHandles.some((v) => v.id === h.id);
@@ -1347,27 +1326,6 @@ export default function VideoInputNode({ id, data, selected }: NodeProps<VideoIn
       <CornerResizer minWidth={160} minHeight={100} />
       <span className="node-above-label">{data.label as string}</span>
 
-      {/* Decorative input handles — purely visual, no effect on the node */}
-      <Handle
-        type="target"
-        position={Position.Left}
-        id="decorativeText"
-        style={{ top: "calc(50% - 16px)" }}
-        className={`node-handle-icon node-handle-icon-prompt${edges.some((e) => e.target === id && e.targetHandle === "decorativeText") ? " node-handle-connected" : ""}`}
-        title="Text input"
-      >
-        <PromptIcon />
-      </Handle>
-      <Handle
-        type="target"
-        position={Position.Left}
-        id="decorativeImage"
-        style={{ top: "calc(50% + 16px)" }}
-        className={`node-handle-icon node-handle-icon-resource${edges.some((e) => e.target === id && e.targetHandle === "decorativeImage") ? " node-handle-connected" : ""}`}
-        title="Image input"
-      >
-        <PhotoIcon />
-      </Handle>
 
       {VIDEO_SOURCE_HANDLES.map((h, i) => {
         const visible = visibleHandles.some((v) => v.id === h.id);
@@ -1425,23 +1383,7 @@ export default function VideoInputNode({ id, data, selected }: NodeProps<VideoIn
   );
 }
 
-function PromptIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 14 14" fill="white">
-      <path d="M1.5 2h11v2H8.5v8H5.5V4H1.5V2z" />
-    </svg>
-  );
-}
 
-function PhotoIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-      <circle cx="9" cy="9" r="2" fill="white" stroke="none" />
-      <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
-    </svg>
-  );
-}
 
 function VidSrcFrameStartIcon() {
   return (
