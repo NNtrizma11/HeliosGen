@@ -367,27 +367,6 @@ export default function ImageInputNode({ id, data, selected }: NodeProps<ImageIn
                 <ImageOutIcon />
               </Handle>
 
-              {/* Decorative input handles — purely visual, no effect on the node */}
-              <Handle
-                type="target"
-                position={Position.Left}
-                id="decorativeText"
-                style={{ top: "calc(50% - 16px)" }}
-                className={`node-handle-icon node-handle-icon-prompt${edges.some((e) => e.target === id && e.targetHandle === "decorativeText") ? " node-handle-connected" : ""}`}
-                title="Text input"
-              >
-                <PromptIcon />
-              </Handle>
-              <Handle
-                type="target"
-                position={Position.Left}
-                id="decorativeImage"
-                style={{ top: "calc(50% + 16px)" }}
-                className={`node-handle-icon node-handle-icon-resource${edges.some((e) => e.target === id && e.targetHandle === "decorativeImage") ? " node-handle-connected" : ""}`}
-                title="Image input"
-              >
-                <ImageOutIcon />
-              </Handle>
 
         <input
           ref={fileRef}
@@ -470,27 +449,6 @@ export default function ImageInputNode({ id, data, selected }: NodeProps<ImageIn
         <ImageOutIcon />
       </Handle>
 
-      {/* Decorative input handles — purely visual, no effect on the node */}
-      <Handle
-        type="target"
-        position={Position.Left}
-        id="decorativeText"
-        style={{ top: "calc(50% - 16px)" }}
-        className={`node-handle-icon node-handle-icon-prompt${edges.some((e) => e.target === id && e.targetHandle === "decorativeText") ? " node-handle-connected" : ""}`}
-        title="Text input"
-      >
-        <PromptIcon />
-      </Handle>
-      <Handle
-        type="target"
-        position={Position.Left}
-        id="decorativeImage"
-        style={{ top: "calc(50% + 16px)" }}
-        className={`node-handle-icon node-handle-icon-resource${edges.some((e) => e.target === id && e.targetHandle === "decorativeImage") ? " node-handle-connected" : ""}`}
-        title="Image input"
-      >
-        <ImageOutIcon />
-      </Handle>
 
       <div className="overflow-hidden rounded-[7px] p-2.5">
         <div
@@ -539,12 +497,5 @@ function ImageOutIcon() {
   );
 }
 
-function PromptIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 14 14" fill="white">
-      <path d="M1.5 2h11v2H8.5v8H5.5V4H1.5V2z" />
-    </svg>
-  );
-}
 
 

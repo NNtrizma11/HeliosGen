@@ -83,6 +83,44 @@ const edgeTypes = {
   default: CuttableEdge,
 };
 
+// ── Connection types ─────────────────────────────────────────────────────────
+// Outputs sit on the right of a node, inputs on the left. A wire is only allowed
+// from an output into an input that takes the same kind of media.
+type MediaType = "text" | "image" | "video" | "audio";
+
+/** What a node's output handle produces. Undefined = the node has no outputs. */
+function outputTypeOf(nodeType: string | undefined, sourceHandle: string | null | undefined): MediaType | undefined {
+  switch (nodeType) {
+    case "promptNode":
+    case "assistantNode":
+      return "text";
+    case "imageInputNode":
+    case "generateNode":
+      return "image";
+    case "voiceNode":
+      return "audio";
+    case "videoInputNode":
+    case "videoGeneratorNode":
+      if (sourceHandle === "startFrameOut" || sourceHandle === "endFrameOut" || sourceHandle === "imagePickOut") return "image";
+      if (sourceHandle === "audioRefOut") return "audio";
+      return "video";
+    default:
+      return undefined;
+  }
+}
+
+/** What each input handle accepts. Handles not listed here accept nothing. */
+const INPUT_ACCEPTS: Record<string, MediaType[]> = {
+  prompt: ["text"],
+  image: ["image"],
+  startFrame: ["image"],
+  endFrame: ["image"],
+  resource: ["image"],
+  videoRef: ["video"],
+  referenceVideo: ["video"],
+  audioRef: ["audio"],
+};
+
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const isMacPlatform = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
@@ -1011,6 +1049,13 @@ export default function WorkflowCanvas() {
     return () => document.removeEventListener("keydown", onKey);
   }, [duplicateSelection, unlockAll, setSelectionLocked, selectAll, reorderSelection]);
 
+  // Reference nodes used to have decorative input bubbles that accepted wires but did
+  // nothing. Those inputs are gone; drop any saved wires that still point at them.
+  useEffect(() => {
+    const stale = edges.filter((e) => e.targetHandle === "decorativeText" || e.targetHandle === "decorativeImage");
+    if (stale.length) onEdgesChange(stale.map((e) => ({ type: "remove" as const, id: e.id })));
+  }, [edges, onEdgesChange]);
+
   // ── Auto-trim + frame-extract on new connections ─────────────────────────────
   const handleConnect = useCallback((connection: Connection) => {
     onConnect(connection);
@@ -1171,36 +1216,12 @@ export default function WorkflowCanvas() {
       const source = nodes.find((n) => n.id === connection.source);
       const target = nodes.find((n) => n.id === connection.target);
 
-      // Ref nodes are pure sources — nothing functional can connect into them.
-      // Exception: the decorative input handles accept any wire but do nothing with it.
-      if (target?.type === "imageInputNode" || target?.type === "videoInputNode") {
-        return connection.targetHandle === "decorativeText" || connection.targetHandle === "decorativeImage";
-      }
-
-      // Voice nodes output audio only — they can feed audio reference inputs and nothing else
-      if (source?.type === "voiceNode" && connection.targetHandle !== "audioRef") return false;
-
-      // Prompt handles only accept text-producing nodes
-      if (
-        connection.targetHandle === "prompt" &&
-        source?.type !== "promptNode" &&
-        source?.type !== "assistantNode"
-      ) return false;
-
-      // videoRef handle only accepts video nodes
-      if (connection.targetHandle === "videoRef") {
-        if (source?.type !== "videoInputNode" && source?.type !== "videoGeneratorNode") return false;
-      }
-
-      // Image/resource handles do not accept text (prompt) nodes
-      if (
-        source?.type === "promptNode" &&
-        (connection.targetHandle === "image" ||
-          connection.targetHandle === "resource" ||
-          connection.targetHandle === "startFrame" ||
-          connection.targetHandle === "endFrame" ||
-          connection.targetHandle === "videoRef")
-      ) return false;
+      // Every wire runs from an output into an input of the same kind
+      // (text → prompt, image → image inputs, video → video inputs, audio → audio input).
+      // Reference nodes (image, video, voice) are pure sources and have no inputs.
+      const outType = outputTypeOf(source?.type, connection.sourceHandle);
+      const inTypes = connection.targetHandle ? INPUT_ACCEPTS[connection.targetHandle] : undefined;
+      if (!outType || !inTypes || !inTypes.includes(outType)) return false;
 
       if (target?.type === "generateNode") {
         if (connection.targetHandle === "prompt") {
