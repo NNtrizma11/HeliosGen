@@ -83,6 +83,9 @@ export default function VideoInputNode({ id, data, selected }: NodeProps<VideoIn
   const [trimOpen, setTrimOpen]                 = useState(false);
   const [viewMode, setViewMode]                 = useState<"video" | "frame">("video");
   const [isPlaying, setIsPlaying]               = useState(false);
+  // Set when the user presses pause; automatic resumes (after trim, picker, etc.)
+  // must not override it. Cleared when the user plays or takes an explicit action.
+  const userPausedRef = useRef(false);
   const [videoDuration, setVideoDuration]       = useState(0);
   const [localTrimStart, setLocalTrimStart]     = useState(0);
   const [localTrimEnd, setLocalTrimEnd]         = useState(0);
@@ -520,6 +523,7 @@ export default function VideoInputNode({ id, data, selected }: NodeProps<VideoIn
     setTrimOpen(false);
     if (videoRef.current) {
       videoRef.current.currentTime = localTrimStartRef.current;
+      userPausedRef.current = false;
       videoRef.current.play().catch(() => {});
     }
   }, [id, updateNodeData]);
@@ -624,7 +628,7 @@ export default function VideoInputNode({ id, data, selected }: NodeProps<VideoIn
 
   useEffect(() => {
     if (pickerOpen || viewMode === "frame") videoRef.current?.pause();
-    else videoRef.current?.play().catch(() => {});
+    else if (!userPausedRef.current) videoRef.current?.play().catch(() => {});
   }, [pickerOpen, viewMode]);
 
   // Auto-open trimmer when a connected model requires a shorter video
@@ -727,7 +731,10 @@ export default function VideoInputNode({ id, data, selected }: NodeProps<VideoIn
             playsInline
             preload="metadata"
             loop
-            onPlay={() => setIsPlaying(true)}
+            onPlay={(e) => {
+              if (userPausedRef.current) { e.currentTarget.pause(); return; }
+              setIsPlaying(true);
+            }}
             onPause={() => setIsPlaying(false)}
             onLoadedMetadata={(e) => {
               const v = e.currentTarget;
@@ -769,6 +776,7 @@ export default function VideoInputNode({ id, data, selected }: NodeProps<VideoIn
               ref={topVideoRef}
               src={topVideoUrl}
               autoPlay
+              onPlay={(e) => { if (userPausedRef.current) e.currentTarget.pause(); }}
               muted
               playsInline
               loop
@@ -907,7 +915,8 @@ export default function VideoInputNode({ id, data, selected }: NodeProps<VideoIn
                     e.stopPropagation();
                     const v = videoRef.current;
                     if (!v) return;
-                    if (v.paused) v.play().catch(() => {}); else v.pause();
+                    if (v.paused) { userPausedRef.current = false; v.play().catch(() => {}); }
+                    else { userPausedRef.current = true; v.pause(); topVideoRef.current?.pause(); }
                   }}
                   className="absolute bottom-2 right-11 w-7 h-7 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover/player:opacity-100 transition-opacity pointer-events-auto z-10 node-slide-reveal"
                   title={isPlaying ? "Pause" : "Play"}
@@ -1043,7 +1052,8 @@ export default function VideoInputNode({ id, data, selected }: NodeProps<VideoIn
                     e.stopPropagation();
                     const v = videoRef.current;
                     if (!v) return;
-                    if (v.paused) v.play().catch(() => {}); else v.pause();
+                    if (v.paused) { userPausedRef.current = false; v.play().catch(() => {}); }
+                    else { userPausedRef.current = true; v.pause(); topVideoRef.current?.pause(); }
                   }}
                   className="nodrag w-6 h-6 flex items-center justify-center shrink-0 text-white/80 hover:text-white"
                 >

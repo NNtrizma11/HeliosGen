@@ -11,6 +11,9 @@ export async function GET(req: NextRequest) {
   const mediaType = searchParams.get("type") === "video" ? "video" : "image";
   const page      = Math.max(0, Number(searchParams.get("page") ?? 0));
   const source    = searchParams.get("source") as "generation" | "upload" | null;
+  // Search: matches prompt or model text. Uploads carry neither, so they drop out while searching.
+  const q         = (searchParams.get("q") ?? "").trim().slice(0, 100);
+  const qPattern  = q ? `%${q.replace(/[%_\\,()]/g, " ")}%` : null;
 
   type Item = {
     id: string;
@@ -95,13 +98,15 @@ export async function GET(req: NextRequest) {
   let genItems: Item[] = [];
   let genError: { message: string } | null = null;
   if (!source || source === "generation") {
-    const { data: gens, error } = await supabaseAdmin
+    let genQuery = supabaseAdmin
       .from("generations")
       .select("id, generation_type, prompt, model, aspect_ratio, image_url, image_urls, video_url, quality, azure_resolution, created_at, reference_image_urls")
       .eq("user_id", userId)
       .eq("generation_type", mediaType)
       .eq("status", "done")
-      .not(genUrlCol, "is", null)
+      .not(genUrlCol, "is", null);
+    if (qPattern) genQuery = genQuery.or(`prompt.ilike.${qPattern},model.ilike.${qPattern}`);
+    const { data: gens, error } = await genQuery
       .order("created_at", { ascending: false })
       .limit(TABLE_CAP);
 
@@ -126,7 +131,7 @@ export async function GET(req: NextRequest) {
 
   let uploadItems: Item[] = [];
   let uploadError: { message: string } | null = null;
-  if (!source || source === "upload") {
+  if ((!source || source === "upload") && !qPattern) {
     const { data: uploads, error } = await supabaseAdmin
       .from("user_uploads")
       .select("id, r2_url, mime_type, created_at")
