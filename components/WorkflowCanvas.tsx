@@ -1057,7 +1057,6 @@ export default function WorkflowCanvas() {
           label: "Swap product (Kling 4.0)",
           submenu: [
             ...productNodes.map((p) => ({ label: String(p.data?.label || "Image"), onClick: () => swapProduct(swapSrc.id, p.id) })),
-            ...(productNodes.length ? ["divider" as const] : []),
             { label: "New product image…", onClick: () => swapProduct(swapSrc.id, null) },
           ],
         }] : []),
