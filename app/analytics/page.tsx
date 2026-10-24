@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 interface Account {
   account_id: string; name: string; currency: string | null; market: string | null; business_name: string | null;
   sync_enabled: boolean; backfilled_at: string | null; last_sync_at: string | null; last_sync_error: string | null;
-  connection_id: number | null; account_status: number | null;
+  connection_id: number | null; account_status: number | null; is_sample?: boolean;
 }
 interface Connection {
   id: number; token_type: string; meta_user_id: string | null; meta_user_name: string | null;
@@ -467,6 +467,11 @@ export default function AnalyticsPage() {
         {data && (
           <div className="text-[11px] text-white/40 -mt-3">
             {days === "today" ? `Today so far (${data.period.end}) vs yesterday` : `${data.period.start} → ${data.period.end} vs previous ${data.period.days} days`} · last synced {data.account.last_sync_at ? new Date(data.account.last_sync_at).toLocaleString() : "never"} · purchases and revenue as reported by Meta (COD orders not yet adjusted for non-pickup)
+          </div>
+        )}
+        {data?.account.is_sample && (
+          <div className="rounded-lg border border-sky-400/40 bg-sky-400/10 px-4 py-3 text-sm text-sky-100">
+            <b>Sample data.</b> This is a test ad account with no real spend. The figures below are illustrative example metrics, shown so you can see how Analytics displays a connected account. Real ad accounts show the spend, purchases, ROAS and creative performance that Meta reports.
           </div>
         )}
         {info.connections.some((c) => c.last_error || (c.expires_at && Date.parse(c.expires_at) - Date.now() < 10 * 864e5)) && (
