@@ -145,6 +145,11 @@ function Connect({ info, onDone, embedded = false }: { info: ConnectionInfo | nu
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [oauthErr, setOauthErr] = useState("");
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    if (q.get("meta") === "error") setOauthErr(q.get("reason") || "Unknown error");
+  }, []);
   const submit = async () => {
     setBusy(true); setErr("");
     try { await api("/api/meta/connection", { method: "POST", body: JSON.stringify({ token }) }); setToken(""); onDone(); }
@@ -167,6 +172,7 @@ function Connect({ info, onDone, embedded = false }: { info: ConnectionInfo | nu
         <div className={`${box} p-5 space-y-3`}>
           <div className="text-sm font-medium">Option 1 · Continue with Facebook (recommended)</div>
           <p className="text-xs text-white/50">A business admin logs in and picks the business and the ad accounts to share. Helios gets read-only access to exactly those accounts through a system user Meta creates in that business; no personal profile is attached to the ad accounts. Revoke anytime in Business settings → Integrations. Repeat for other businesses.</p>
+          {oauthErr && <div className="text-xs text-red-400">Facebook connection failed: {oauthErr}</div>}
           <button onClick={fbLogin} className={primary}>Continue with Facebook</button>
         </div>
       )}

@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   };
   const [state, userId] = (req.cookies.get("meta_oauth")?.value ?? "").split(".");
   const code = req.nextUrl.searchParams.get("code");
-  if (!code || !state || state !== req.nextUrl.searchParams.get("state")) return back("meta=error&reason=state");
+  if (!code || !state || state !== req.nextUrl.searchParams.get("state")) { console.error("[meta oauth callback] state mismatch or missing code"); return back("meta=error&reason=state"); }
 
   const base = `https://graph.facebook.com/${GRAPH_VERSION}/oauth/access_token`;
   const id = process.env.META_APP_ID!, secret = process.env.META_APP_SECRET!;
@@ -36,6 +36,7 @@ export async function GET(req: NextRequest) {
     await connectToken(token, userId || null, kind, expiresAt);
     return back("meta=connected");
   } catch (e) {
+    console.error("[meta oauth callback]", e instanceof Error ? e.message : e);
     return back(`meta=error&reason=${encodeURIComponent(e instanceof Error ? e.message : String(e))}`);
   }
 }
