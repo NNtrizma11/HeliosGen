@@ -12,6 +12,25 @@ import { videoCostSpec, videoTier } from "@/lib/pricing";
 
 const KIE_BASE = "https://api.kie.ai";
 
+/**
+ * Kling 4.0 prompt: keep @mentions that name a material in this request
+ * (image_1, video_2, first_frame, …), strip the @ from anything else (Kie rejects
+ * unknown mentions), and append mentions for materials the prompt never names.
+ */
+function kling4Prompt(prompt: string, declared: string[]): string {
+  const byLower = new Map(declared.map((d) => [d.toLowerCase(), d]));
+  const used = new Set<string>();
+  let text = prompt.replace(/@([A-Za-z0-9_]*)/g, (_m, word: string) => {
+    const name = byLower.get(word.toLowerCase());
+    if (!name) return word;
+    used.add(name);
+    return `@${name}`;
+  });
+  const missing = declared.filter((d) => !used.has(d));
+  if (missing.length) text = `${text.trimEnd()}\n\nReferences: ${missing.map((d) => `@${d}`).join(", ")}.`;
+  return text.slice(0, 8000);
+}
+
 interface Resource {
   url: string;
   label: string;
@@ -96,6 +115,38 @@ export async function POST(req: NextRequest) {
       character_orientation: mode,         // "image" or "video"
     };
     if (apiInput.extra) Object.assign(input, apiInput.extra);
+
+  } else if (apiInput.useKling4) {
+    // ── Kling 4.0 (reference-to-video / keyframe-to-video) ────────────────────
+    // Kie rejects any @mention that doesn't match a material in the request, so
+    // undeclared @words lose their @. Materials the prompt never mentions are
+    // listed at the end so the model still uses them.
+    const isKeyframes = apiInput.useKling4 === "keyframes";
+    const [startFrameUrl, endFrameUrl, r2RefImages, r2RefVideos] = await Promise.all([
+      isKeyframes && rawStartFrame ? ensureR2(rawStartFrame, "references").catch(() => rawStartFrame) : Promise.resolve(undefined),
+      isKeyframes && rawEndFrame   ? ensureR2(rawEndFrame,   "references").catch(() => rawEndFrame)   : Promise.resolve(undefined),
+      isKeyframes ? Promise.resolve([] as string[]) : Promise.all((rawRefImages    as string[]).slice(0, 10).map((u) => ensureR2(u, "references").catch(() => u))),
+      isKeyframes ? Promise.resolve([] as string[]) : Promise.all((rawRefVideoUrls as string[]).slice(0, 5).map((u) => ensureR2(u, "references").catch(() => u))),
+    ]);
+
+    const declared = isKeyframes
+      ? [...(startFrameUrl ? ["first_frame"] : []), ...(endFrameUrl ? ["last_frame"] : [])]
+      : [...r2RefImages.map((_, i) => `image_${i + 1}`), ...r2RefVideos.map((_, i) => `video_${i + 1}`)];
+    input = {
+      prompt:                  kling4Prompt(prompt ?? "", declared),
+      [apiInput.durationKey!]: clampedDuration,
+      [apiInput.resolutionKey!]: resolution,
+    };
+    const ratio = String(aspectRatio ?? "").toLowerCase();
+    // Keyframes: ratio only applies without frames (otherwise the first frame decides)
+    if (ratio && (!isKeyframes || (!startFrameUrl && !endFrameUrl))) input[apiInput.aspectRatioKey!] = ratio;
+    if (isKeyframes) {
+      if (startFrameUrl) input.first_frame_url = startFrameUrl;
+      if (endFrameUrl)   input.last_frame_url  = endFrameUrl;
+    } else {
+      if (r2RefImages.length > 0) input.image_urls = r2RefImages;
+      if (r2RefVideos.length > 0) input.video_urls = r2RefVideos;
+    }
 
   } else if (apiInput.useMinimaxH3) {
     // ── MiniMax H3 (text / image / reference to video) ───────────────────────
@@ -470,6 +521,13 @@ export async function POST(req: NextRequest) {
     ? [
         ...((input.image_urls as string[] | undefined) ?? []),
         ...((input.video_list as Array<{ url: string }> | undefined)?.map((v) => v.url) ?? []),
+      ]
+    : apiInput.useKling4
+    ? [
+        ...(input.first_frame_url ? [input.first_frame_url as string] : []),
+        ...(input.last_frame_url  ? [input.last_frame_url as string]  : []),
+        ...((input.image_urls as string[] | undefined) ?? []),
+        ...((input.video_urls as string[] | undefined) ?? []),
       ]
     : apiInput.useMinimaxH3
     ? [

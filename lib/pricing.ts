@@ -64,6 +64,12 @@ export const STARTER_PRICES: Record<string, number> = {
   "vid:kling-3.0:4K:silent": 67,
   "vid:kling-3.0:4K:sound": 67,
   "img:nano-banana-2:1k": 8,
+  // Kling 4.0: kie.ai/kling-4-0, per output second without video input
+  // (with video input the input seconds are billed too, at a lower rate).
+  "vid:kling-4.0:720p:silent": 28.5,
+  "vid:kling-4.0:1080p:silent": 42.5,
+  "vid:kling-4.0-keyframes:720p:silent": 28.5,
+  "vid:kling-4.0-keyframes:1080p:silent": 42.5,
 };
 
 export interface Estimate {

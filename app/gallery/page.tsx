@@ -462,7 +462,7 @@ interface KlingElement {
 function resolveGalleryMentions(
   text: string,
   tagged: TaggedImage[],
-  tagFormat: "default" | "grok" = "default",
+  tagFormat: "default" | "grok" | "kling4" = "default",
 ): { resolvedPrompt: string; extraUrls: string[]; extraAssets: { url: string; kind: "image" | "video" | "audio" }[] } {
   if (!tagged.length) return { resolvedPrompt: text, extraUrls: [], extraAssets: [] };
   type Span = { start: number; end: number; url: string; kind: "image" | "video" | "audio" };
@@ -498,7 +498,7 @@ function resolveGalleryMentions(
       extraUrls.push(span.url);
       extraAssets.push({ url: span.url, kind: span.kind });
     }
-    resolvedPrompt += tagFormat === "grok" ? `@image${slot} ` : `<<<image ${slot}>>>`;
+    resolvedPrompt += tagFormat === "grok" ? `@image${slot} ` : tagFormat === "kling4" ? `@image_${slot} ` : `<<<image ${slot}>>>`;
     lastEnd = span.end;
   }
   resolvedPrompt += text.slice(lastEnd);
