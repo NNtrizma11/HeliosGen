@@ -1270,7 +1270,7 @@ export default function WorkflowCanvas() {
         }
         if (connection.targetHandle === "resource") {
           // Motion control uses videoRef instead — resource is blocked above via handles check
-          const maxResources = isMotionControl ? 0 : 3;
+          const maxResources = isMotionControl ? 0 : (videoCfg?.maxResources ?? 3);
           const count = edges.filter(
             (e) => e.target === connection.target && e.targetHandle === "resource"
           ).length;

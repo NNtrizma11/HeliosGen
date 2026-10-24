@@ -436,7 +436,7 @@ export interface VideoModel {
   /** Max number of audioRef-handle audios accepted by this model (default 3) */
   maxReferenceAudios?: number;
   /** How @mention tags are serialised in the final prompt (default: "<<<image N>>>") */
-  resourceTagFormat?: "default" | "grok";
+  resourceTagFormat?: "default" | "grok" | "kling4";
   apiInput: {
     aspectRatioKey?: string;
     durationKey?: string;
@@ -509,6 +509,12 @@ export interface VideoModel {
      * - otherwise → apiId (t2v): prompt + aspect_ratio + duration + resolution
      */
     useMinimaxH3?: boolean;
+    /**
+     * Kling 4.0 payloads (integer duration, lowercase 720p/1080p):
+     * - "reference": prompt + image_urls (@image_N) + video_urls (@video_N)
+     * - "keyframes": prompt + first_frame_url (@first_frame) + last_frame_url (@last_frame)
+     */
+    useKling4?: "reference" | "keyframes";
   };
 }
 
@@ -674,6 +680,62 @@ export const VIDEO_MODELS: VideoModel[] = [
       resolutionKey: "resolution",
       promptMaxLength: 2500,
       useKlingTurbo: true,
+    },
+  },
+  {
+    // https://docs.kie.ai/market/kling/v4-reference-to-video
+    // Text-to-video when nothing is connected; reference images/videos are
+    // mentioned in the prompt as @image_N / @video_N. Native audio is always on
+    // unless reference videos are given (then their audio is dropped).
+    id: "kling-4.0",
+    apiId: "kling-4.0/reference-to-video",
+    name: "Kling 4.0",
+    provider: "Kling",
+    ratios: ["9:16", "16:9", "1:1", "21:9", "auto"],
+    durations: Array.from({ length: 28 }, (_, i) => i + 3),
+    defaultDuration: 5,
+    defaultRatio: "9:16",
+    handles: ["prompt", "resource", "referenceVideo"],
+    sound: false,
+    resolutions: ["720p", "1080p"],
+    defaultResolution: "1080p",
+    maxResources: 10,
+    maxReferenceVideos: 5,
+    resourceTagFormat: "kling4",
+    apiInput: {
+      aspectRatioKey: "aspect_ratio",
+      durationKey: "duration",
+      durationMin: 3,
+      durationMax: 30,
+      resolutionKey: "resolution",
+      promptMaxLength: 8000,
+      useKling4: "reference",
+    },
+  },
+  {
+    // https://docs.kie.ai/market/kling/v4-keyframe-to-video
+    // First / last frame (middle keyframes not wired yet). With a frame connected
+    // the output follows the first frame's aspect ratio.
+    id: "kling-4.0-keyframes",
+    apiId: "kling-4.0/keyframe-to-video",
+    name: "Kling 4.0 Keyframes",
+    provider: "Kling",
+    ratios: ["9:16", "16:9", "1:1", "21:9"],
+    durations: Array.from({ length: 28 }, (_, i) => i + 3),
+    defaultDuration: 5,
+    defaultRatio: "9:16",
+    handles: ["prompt", "startFrame", "endFrame"],
+    sound: false,
+    resolutions: ["720p", "1080p"],
+    defaultResolution: "1080p",
+    apiInput: {
+      aspectRatioKey: "aspect_ratio",
+      durationKey: "duration",
+      durationMin: 3,
+      durationMax: 30,
+      resolutionKey: "resolution",
+      promptMaxLength: 8000,
+      useKling4: "keyframes",
     },
   },
   // ── X (Grok) ─────────────────────────────────────────────────────────────────

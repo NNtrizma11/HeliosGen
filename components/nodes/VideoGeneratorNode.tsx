@@ -91,7 +91,7 @@ function resolveMentions(
   prompt: string,
   labels: string[],
   imageUrls: string[],
-  tagFormat: "default" | "grok" = "default",
+  tagFormat: "default" | "grok" | "kling4" = "default",
 ): { resolvedPrompt: string; orderedUrls: string[] } {
   if (!labels.length) return { resolvedPrompt: prompt, orderedUrls: imageUrls };
 
@@ -152,7 +152,9 @@ function resolveMentions(
   for (let i = 0; i < spans.length; i++) {
     resolvedPrompt += prompt.slice(lastEnd, spans[i].start);
     if (spanUrls[i] !== null) {
-      resolvedPrompt += tagFormat === "grok" ? `@image${imageNum++} ` : `<<<image ${imageNum++}>>>`;
+      resolvedPrompt += tagFormat === "grok" ? `@image${imageNum++} `
+        : tagFormat === "kling4" ? `@image_${imageNum++} `
+        : `<<<image ${imageNum++}>>>`;
     } else {
       resolvedPrompt += prompt.slice(spans[i].start, spans[i].end);
     }
