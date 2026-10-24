@@ -967,7 +967,7 @@ export default function VideoInputNode({ id, data, selected }: NodeProps<VideoIn
 
               {/* Hover controls row */}
               {!capturedFrameUrl && (
-                <div className="absolute bottom-2 left-0 right-0 flex justify-center items-center px-2.5 opacity-0 group-hover/player:opacity-100 transition-opacity z-10 node-slide-reveal">
+                <div className="absolute bottom-2 left-0 right-0 flex justify-center items-center px-2.5 opacity-0 group-hover/player:opacity-100 transition-opacity z-10 node-slide-reveal pointer-events-none">
                   <button
                     onMouseDown={(e) => e.stopPropagation()}
                     onClick={() => { if (DEMO_MODE) { useWorkflowStore.getState().setAuthModalOpen(true); return; } fileRef.current?.click(); }}
