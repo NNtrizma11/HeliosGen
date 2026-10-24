@@ -1257,6 +1257,8 @@ function GalleryInner() {
   const pageRef = useRef(0);
   const tabRef = useRef<Tab>(tab);
   const sourceFilterRef = useRef<"generated" | "uploaded">(initialSource);
+  const [search, setSearch] = useState("");
+  const searchRef = useRef("");
   const sentinelRef = useRef<HTMLDivElement>(null);
   const loadingRef = useRef(false);
   const loadingMoreRef = useRef(false);
@@ -1396,7 +1398,7 @@ function GalleryInner() {
     // Apply cache / loading state synchronously before any await so the UI
     // updates in the very next render rather than after the token promise.
     const apiSource = sourceFilterRef.current === "uploaded" ? "upload" : "generation";
-    const cacheKey = `${currentTab}-${apiSource}`;
+    const cacheKey = `${currentTab}-${apiSource}${searchRef.current ? `-q:${searchRef.current}` : ""}`;
     if (replace) {
       const cached = galleryCache.get(cacheKey);
       if (cached) { setItems(cached.items); setHasMore(cached.hasMore); }
@@ -1409,7 +1411,8 @@ function GalleryInner() {
     if (!token) { setLoading(false); setLoadingMore(false); return; }
     try {
       const genType = currentTab === "videos" ? "video" : "image";
-      const res = await fetch(`/api/gallery?type=${genType}&page=${page}&source=${apiSource}`, {
+      const qParam = searchRef.current ? `&q=${encodeURIComponent(searchRef.current)}` : "";
+      const res = await fetch(`/api/gallery?type=${genType}&page=${page}&source=${apiSource}${qParam}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) return;
@@ -1454,7 +1457,8 @@ function GalleryInner() {
     if (!token) return [];
     try {
       const genType = currentTab === "videos" ? "video" : "image";
-      const res = await fetch(`/api/gallery?type=${genType}&page=0&source=generation`, {
+      const qParam = searchRef.current ? `&q=${encodeURIComponent(searchRef.current)}` : "";
+      const res = await fetch(`/api/gallery?type=${genType}&page=0&source=generation${qParam}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) return [];
@@ -1632,6 +1636,22 @@ function GalleryInner() {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasMore, loadItems, authLoaded]);
+
+  // Search: debounce typing, then reload page 0 with the query.
+  useEffect(() => {
+    if (DEMO_MODE) return;
+    const q = search.trim();
+    if (q === searchRef.current) return;
+    const t = setTimeout(() => {
+      searchRef.current = q;
+      pageRef.current = 0;
+      setHasMore(true);
+      setItems([]);
+      loadItems(tabRef.current, 0, true);
+    }, 350);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   // When sourceFilter changes, reset to page 0 and fetch only the relevant source.
   useEffect(() => {
@@ -3144,6 +3164,33 @@ function GalleryInner() {
               {src === "generated" ? "Generated" : "Uploaded"}
             </button>
           ))}
+          <div style={{ position: "relative", marginLeft: "10px", display: "flex", alignItems: "center" }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.38)" strokeWidth="2" strokeLinecap="round" style={{ position: "absolute", left: "9px", pointerEvents: "none" }}>
+              <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
+            </svg>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              onKeyDown={e => { if (e.key === "Escape") setSearch(""); }}
+              placeholder="Search prompts or models"
+              aria-label="Search generations by prompt or model"
+              style={{
+                width: "220px", height: "28px", padding: "0 26px 0 28px",
+                borderRadius: "8px", border: "1px solid rgba(255,255,255,0.08)",
+                background: "rgba(255,255,255,0.04)", color: "#fff",
+                fontSize: "12.5px", fontFamily: "inherit", outline: "none",
+              }}
+            />
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                aria-label="Clear search"
+                style={{ position: "absolute", right: "6px", width: "16px", height: "16px", border: "none", background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
+              >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Center: current folder breadcrumb */}
@@ -6194,26 +6241,19 @@ function GalleryCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Play/pause observer: only play videos that are actually visible
+  // Videos show their first frame and play only while hovered, so the grid
+  // doesn't stream every visible video at once.
   useEffect(() => {
     if (!isVideo) return;
-    const el = cardRef.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          videoRef.current?.play().then(() => setPlaying(true)).catch(() => {});
-        } else {
-          videoRef.current?.pause();
-          setPlaying(false);
-        }
-      },
-      { root: scrollContainer?.current ?? null, rootMargin: "0px", threshold: 0.1 },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isVideo]);
+    const v = videoRef.current;
+    if (!v) return;
+    if (isHovered) {
+      v.play().then(() => setPlaying(true)).catch(() => {});
+    } else {
+      v.pause();
+      setPlaying(false);
+    }
+  }, [isVideo, isHovered]);
 
   const storedRatio = (() => {
     const ar = item.aspect_ratio;
@@ -6309,9 +6349,8 @@ function GalleryCard({
         <>
           <video
             ref={videoRef}
-            src={shouldLoad ? item.url : undefined}
+            src={shouldLoad ? `${item.url}#t=0.1` : undefined}
             muted={videoMuted || !isHovered}
-            autoPlay
             loop
             playsInline
             preload="metadata"
