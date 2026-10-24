@@ -535,6 +535,13 @@ export default function AuthModal() {
                   Forgot password?
                 </button>
               </div>
+              <p style={{ textAlign: "center", fontSize: "11px", color: "rgba(255,255,255,0.3)", margin: "2px 0 0" }}>
+                <a href="/privacy.html" target="_blank" rel="noreferrer" style={{ color: "inherit" }}>Privacy</a>
+                {" · "}
+                <a href="/terms.html" target="_blank" rel="noreferrer" style={{ color: "inherit" }}>Terms</a>
+                {" · "}
+                <a href="/data-deletion.html" target="_blank" rel="noreferrer" style={{ color: "inherit" }}>Data deletion</a>
+              </p>
             </form>
             </>
           )}
