@@ -963,6 +963,57 @@ export default function WorkflowCanvas() {
     });
   }, [addNode]);
 
+  /**
+   * Swap product: Kling 4.0 edits the source video and replaces its product with the
+   * chosen image, keeping the motion. Adds a prompt node + Kling 4.0 node next to the
+   * video and wires video → reference video, image → reference image, prompt → prompt.
+   * With no image chosen, an empty image node is added for the user to upload into.
+   */
+  const swapProduct = useCallback((videoNodeId: string, imageNodeId: string | null) => {
+    const state = useWorkflowStore.getState();
+    const src = state.nodes.find((n) => n.id === videoNodeId);
+    if (!src) return;
+    const d = src.data as Record<string, unknown>;
+    const w = (src.measured?.width ?? (src.style?.width as number | undefined) ?? 320);
+    const x0 = src.position.x + w + 80;
+    const y0 = src.position.y;
+
+    let imgId = imageNodeId;
+    if (!imgId) {
+      imgId = `imageInputNode-${uid()}`;
+      addNode({ id: imgId, type: "imageInputNode", position: { x: x0, y: y0 + 300 }, style: { width: 160 }, data: { label: "", status: "idle" } });
+    }
+    const imgLabel = (useWorkflowStore.getState().nodes.find((n) => n.id === imgId)?.data?.label as string | undefined) || "Product";
+
+    // Duration follows the clip (Kling 4.0: 3–30 s); ratio follows its shape
+    const rawDur = Number(d.videoDuration ?? d.duration ?? 5);
+    const duration = Math.min(30, Math.max(3, Math.round(rawDur || 5)));
+    const ratioStr = String(d.videoAspectRatio ?? d.imageNaturalRatio ?? "");
+    const [rw, rh] = ratioStr.split("/").map((s) => Number(s.trim()));
+    const r = rw && rh ? rw / rh : 9 / 16;
+    const aspectRatio = r < 0.8 ? "9:16" : r > 1.25 ? "16:9" : "1:1";
+
+    // The image mention comes first: unlabeled @words take the next free image slot.
+    const prompt =
+      `Take the product from @${imgLabel}. Edit @video_1: replace the main product or object in the video with that exact product ` +
+      `(same shape, label, colours, logo and text; the label stays sharp and readable in every frame). ` +
+      `The new product must perform exactly the same motion as the original object, frame for frame: every spin, flip, rotation, bounce and trajectory, at the same speed and timing. ` +
+      `Keep everything else unchanged: camera movement, timing, lighting, background, environment and effects. Do not add text or people.`;
+
+    const promptId = `promptNode-${uid()}`;
+    const genId = `videoGeneratorNode-${uid()}`;
+    addNode({ id: promptId, type: "promptNode", position: { x: x0, y: y0 - 40 }, style: { width: 420, height: 230 }, data: { label: "", status: "idle", prompt } });
+    addNode({
+      id: genId, type: "videoGeneratorNode", position: { x: x0 + 480, y: y0 },
+      style: { width: 320, height: 569 },
+      data: { label: "", status: "idle", videoModel: "kling-4.0", duration, aspectRatio, grokResolution: "720p", sound: false },
+    });
+    insertEdge({ id: `edge-${uid()}`, source: promptId, target: genId, targetHandle: "prompt" });
+    insertEdge({ id: `edge-${uid()}`, source: imgId, target: genId, targetHandle: "resource" });
+    insertEdge({ id: `edge-${uid()}`, source: videoNodeId, sourceHandle: "videoRefOut", target: genId, targetHandle: "referenceVideo" });
+    requestWorkflowSync();
+  }, [addNode, insertEdge]);
+
   const onNodeContextMenu = useCallback((e: React.MouseEvent, node: Node) => {
     e.preventDefault();
     // Right-clicking outside the current selection acts on that node alone
@@ -991,11 +1042,25 @@ export default function WorkflowCanvas() {
       const selectedCount = nodes.filter((n) => n.selected).length || 1;
       const locked = !!node?.data?.locked;
       const url = selectedCount === 1 ? nodeMediaUrl(node) : undefined;
+      const swapSrc = selectedCount === 1 && node && (node.type === "videoInputNode" || node.type === "videoGeneratorNode")
+        && typeof node.data?.videoUrl === "string" && /^https?:\/\//.test(node.data.videoUrl as string) ? node : null;
+      const productNodes = swapSrc
+        ? nodes.filter((n) => (n.type === "imageInputNode" && /^https?:\/\//.test(String(n.data?.r2Url ?? "")))
+            || (n.type === "generateNode" && /^https?:\/\//.test(String(n.data?.imageUrl ?? ""))))
+        : [];
       return [
         { label: selectedCount > 1 ? `Copy ${selectedCount} nodes` : "Copy", shortcut: mod("C"), onClick: handleCopy },
         { label: "Paste", shortcut: mod("V"), onClick: pasteHere, disabled: !clipboardRef.current },
         { label: "Duplicate", shortcut: mod("D"), onClick: duplicateSelection },
         ...(url ? [{ label: "Copy link to media", onClick: () => { navigator.clipboard.writeText(url).catch(() => {}); } }] : []),
+        ...(swapSrc ? ["divider" as const, {
+          label: "Swap product (Kling 4.0)",
+          submenu: [
+            ...productNodes.map((p) => ({ label: String(p.data?.label || "Image"), onClick: () => swapProduct(swapSrc.id, p.id) })),
+            ...(productNodes.length ? ["divider" as const] : []),
+            { label: "New product image…", onClick: () => swapProduct(swapSrc.id, null) },
+          ],
+        }] : []),
         "divider",
         { label: "Bring to front", shortcut: "]", onClick: () => reorderSelection("front") },
         { label: "Send to back", shortcut: "[", onClick: () => reorderSelection("back") },
@@ -1024,7 +1089,7 @@ export default function WorkflowCanvas() {
       "divider",
       { label: "Unlock all objects", shortcut: isMacPlatform() ? "⌥⇧⌘L" : "Ctrl+Alt+Shift+L", onClick: unlockAll, disabled: !anyLocked },
     ];
-  }, [ctxMenu, nodes, handleCopy, handlePaste, duplicateSelection, reorderSelection, setSelectionLocked, deleteSelection, addNodeAtScreen, selectAll, handleUndo, handleRedo, canUndo, canRedo, unlockAll]);
+  }, [ctxMenu, nodes, handleCopy, handlePaste, duplicateSelection, reorderSelection, setSelectionLocked, deleteSelection, addNodeAtScreen, selectAll, handleUndo, handleRedo, canUndo, canRedo, unlockAll, swapProduct]);
 
   // Keyboard: duplicate, lock, layer order, select all, fit view
   useEffect(() => {
